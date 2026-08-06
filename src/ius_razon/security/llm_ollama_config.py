@@ -4,13 +4,17 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 OLLAMA_CHAT_ENDPOINT = "http://127.0.0.1:11434/api/chat"
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _TRUE_VALUES = {"1", "true", "yes", "on", "sí", "si"}
 _FALSE_VALUES = {"0", "false", "no", "off", ""}
 _MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,159}$")
+_CLOUD_MODEL_PATTERN = re.compile(
+    r"(?:^|[:/_-])cloud(?:$|[:/_-])",
+    flags=re.IGNORECASE,
+)
 
 
 class OllamaProviderConfigurationError(ValueError):
@@ -78,6 +82,55 @@ def _parse_float(
     return parsed
 
 
+def _validate_model_name(value: str, *, key: str) -> str:
+    model = value.strip()
+    if not _MODEL_PATTERN.fullmatch(model):
+        raise OllamaProviderConfigurationError(
+            f"{key} contiene caracteres no permitidos."
+        )
+    if _CLOUD_MODEL_PATTERN.search(model):
+        raise OllamaProviderConfigurationError(
+            f"{key} no puede seleccionar modelos cloud."
+        )
+    return model
+
+
+def _parse_allowed_models(
+    values: Mapping[str, str],
+) -> tuple[str, ...]:
+    raw = values.get(
+        "IUS_RAZON_OLLAMA_ALLOWED_MODELS",
+        "qwen3:1.7b",
+    )
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not parts:
+        raise OllamaProviderConfigurationError(
+            "IUS_RAZON_OLLAMA_ALLOWED_MODELS debe incluir al menos un modelo."
+        )
+    if len(parts) > 8:
+        raise OllamaProviderConfigurationError(
+            "IUS_RAZON_OLLAMA_ALLOWED_MODELS admite como máximo 8 modelos."
+        )
+    validated = tuple(
+        _validate_model_name(
+            part,
+            key="IUS_RAZON_OLLAMA_ALLOWED_MODELS",
+        )
+        for part in parts
+    )
+    if len(set(validated)) != len(validated):
+        raise OllamaProviderConfigurationError(
+            "IUS_RAZON_OLLAMA_ALLOWED_MODELS no admite duplicados."
+        )
+    return validated
+
+
+def is_cloud_model_name(value: str) -> bool:
+    """Detecta identificadores que declaran ejecución cloud."""
+
+    return bool(_CLOUD_MODEL_PATTERN.search(value.strip()))
+
+
 def _normalize_local_endpoint(value: str) -> str:
     endpoint = value.strip().rstrip("/")
     parsed = urlparse(endpoint)
@@ -110,6 +163,20 @@ def _normalize_local_endpoint(value: str) -> str:
     return endpoint
 
 
+def _replace_api_path(endpoint: str, path: str) -> str:
+    parsed = urlparse(endpoint)
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            "",
+            "",
+            "",
+        )
+    )
+
+
 @dataclass(frozen=True, repr=False)
 class OllamaProviderSettings:
     """Configuración local, gratuita y sin secretos para Ollama."""
@@ -123,6 +190,8 @@ class OllamaProviderSettings:
     context_window: int = 4096
     temperature: float = 0.0
     max_retries: int = 0
+    health_timeout_seconds: int = 5
+    allowed_models: tuple[str, ...] = ("qwen3:1.7b",)
 
     def __repr__(self) -> str:
         return (
@@ -135,7 +204,9 @@ class OllamaProviderSettings:
             f"max_output_tokens={self.max_output_tokens!r}, "
             f"context_window={self.context_window!r}, "
             f"temperature={self.temperature!r}, "
-            f"max_retries={self.max_retries!r})"
+            f"max_retries={self.max_retries!r}, "
+            f"health_timeout_seconds={self.health_timeout_seconds!r}, "
+            f"allowed_models={self.allowed_models!r})"
         )
 
     @property
@@ -144,17 +215,48 @@ class OllamaProviderSettings:
 
         return self.enabled and bool(self.model.strip())
 
+    @property
+    def version_endpoint(self) -> str:
+        """Endpoint local para consultar la versión de Ollama."""
+
+        return _replace_api_path(self.endpoint, "/api/version")
+
+    @property
+    def tags_endpoint(self) -> str:
+        """Endpoint local para consultar los modelos instalados."""
+
+        return _replace_api_path(self.endpoint, "/api/tags")
+
     def validate(self) -> None:
-        """Valida modelo, endpoint y límites estrictamente locales."""
+        """Valida modelo, endpoint, allowlist y límites estrictamente locales."""
 
         _normalize_local_endpoint(self.endpoint)
-        if not _MODEL_PATTERN.fullmatch(self.model):
+        model = _validate_model_name(
+            self.model,
+            key="IUS_RAZON_OLLAMA_MODEL",
+        )
+        allowed_models = tuple(
+            _validate_model_name(
+                item,
+                key="IUS_RAZON_OLLAMA_ALLOWED_MODELS",
+            )
+            for item in self.allowed_models
+        )
+        if not allowed_models:
             raise OllamaProviderConfigurationError(
-                "IUS_RAZON_OLLAMA_MODEL contiene caracteres no permitidos."
+                "Debe existir al menos un modelo local permitido."
+            )
+        if len(set(allowed_models)) != len(allowed_models):
+            raise OllamaProviderConfigurationError(
+                "La lista de modelos permitidos no admite duplicados."
+            )
+        if model not in allowed_models:
+            raise OllamaProviderConfigurationError(
+                "El modelo configurado no pertenece a la lista local permitida."
             )
         if self.max_retries != 0:
             raise OllamaProviderConfigurationError(
-                "La integración local inicial exige cero reintentos."
+                "La integración local exige cero reintentos."
             )
         if self.max_input_tokens + self.max_output_tokens > self.context_window:
             raise OllamaProviderConfigurationError(
@@ -169,6 +271,7 @@ class OllamaProviderSettings:
         """Construye la configuración desde variables de entorno no secretas."""
 
         values = dict(os.environ if environ is None else environ)
+        allowed_models = _parse_allowed_models(values)
         settings = cls(
             enabled=_parse_bool(
                 values.get("IUS_RAZON_OLLAMA_ENABLED"),
@@ -224,6 +327,14 @@ class OllamaProviderSettings:
                 minimum=0,
                 maximum=0,
             ),
+            health_timeout_seconds=_parse_int(
+                values,
+                "IUS_RAZON_OLLAMA_HEALTH_TIMEOUT_SECONDS",
+                default=5,
+                minimum=1,
+                maximum=15,
+            ),
+            allowed_models=allowed_models,
         )
         settings.validate()
         return settings
@@ -243,10 +354,13 @@ class OllamaProviderSettings:
             "think": False,
             "stream": False,
             "timeout_seconds": self.timeout_seconds,
+            "health_timeout_seconds": self.health_timeout_seconds,
             "max_input_tokens": self.max_input_tokens,
             "max_output_tokens": self.max_output_tokens,
             "context_window": self.context_window,
             "temperature": self.temperature,
             "max_retries": self.max_retries,
             "fallback_required": True,
+            "allowed_models": list(self.allowed_models),
+            "cloud_models_blocked": True,
         }

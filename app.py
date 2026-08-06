@@ -70,6 +70,7 @@ from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
 from ius_razon.services.llm_assistant_service import LLMAssistantService
+from ius_razon.services.llm_ollama_health import OllamaHealthProbe
 from ius_razon.services.llm_provider import (
     ControlledExternalTestProvider,
     DeterministicMockProvider,
@@ -140,6 +141,11 @@ def build_services() -> tuple[
         if ollama_settings.configured
         else None
     )
+    ollama_health_probe = (
+        OllamaHealthProbe(ollama_settings)
+        if ollama_settings.configured
+        else None
+    )
     llm_assistant = LLMAssistantService(
         case_service=case_service,
         reasoning_service=reasoning,
@@ -150,6 +156,7 @@ def build_services() -> tuple[
         ollama_provider=ollama_provider,
         ollama_settings=ollama_settings,
         ollama_configuration_error=ollama_error,
+        ollama_health_probe=ollama_health_probe,
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )

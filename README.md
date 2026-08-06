@@ -1,13 +1,13 @@
-# IUS-Razón — Sprint 4.5.1 (v0.7.1)
+# IUS-Razón — Sprint 4.5.2 (v0.7.2)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
 borradores asistivos bajo control humano.
 
-El motor determinista permanece en la versión 3.2.0. Sprint 4.5.1 incorpora
-Ollama como proveedor generativo local gratuito, restringido a loopback,
-sin clave API, sin costo por solicitud y sin enviar el expediente a Internet.
-El proveedor simulado y la prueba externa controlada permanecen disponibles.
+El motor determinista permanece en la versión 3.2.0. Sprint 4.5.2 robustece
+Ollama como proveedor generativo local gratuito: verifica servicio, versión
+y modelo instalado; limita la selección mediante allowlist; bloquea nombres
+cloud; clasifica fallos y conserva fallback y revisión humana obligatoria.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
@@ -427,5 +427,93 @@ Resultado previsto:
 All checks passed!
 Success: no issues found
 142 passed
+```
+
+## Sprint 4.5.2 · Diagnóstico y robustez de Ollama
+
+La versión 0.7.2 añade un preflight local antes de cada generación con Ollama:
+
+```text
+GET http://127.0.0.1:11434/api/version
+GET http://127.0.0.1:11434/api/tags
+```
+
+Estas consultas no incluyen datos del expediente. Verifican únicamente:
+
+- disponibilidad del servicio;
+- versión informada por Ollama;
+- modelos instalados;
+- presencia exacta del modelo configurado;
+- tiempo máximo de diagnóstico.
+
+La configuración incorpora una allowlist explícita. El modelo activo debe
+pertenecer a `IUS_RAZON_OLLAMA_ALLOWED_MODELS`. Los identificadores que declaran
+ejecución cloud quedan rechazados aun cuando el endpoint sea `localhost`.
+
+Perfil predeterminado:
+
+```text
+IUS_RAZON_OLLAMA_MODEL=qwen3:1.7b
+IUS_RAZON_OLLAMA_ALLOWED_MODELS=qwen3:1.7b
+IUS_RAZON_OLLAMA_HEALTH_TIMEOUT_SECONDS=5
+```
+
+El panel de Streamlit muestra estado, versión, instalación del modelo y código
+de error seguro. Si el diagnóstico falla durante una generación y el fallback
+está habilitado, se genera un borrador determinista local sin invocar el modelo.
+
+Los fallos locales se clasifican sin exponer el cuerpo de la respuesta:
+
+```text
+ollama_unavailable
+ollama_timeout
+ollama_network_error
+ollama_model_not_installed
+ollama_model_not_found
+ollama_overloaded
+ollama_internal_error
+ollama_incomplete_response
+```
+
+La salida local también normaliza exclusivamente declaraciones operativas sobre
+la ausencia de una conclusión de inferencia. La forma final comienza con
+`Control de contexto:` para que el validador no la confunda con una afirmación
+jurídica sustantiva. Otras afirmaciones negativas continúan exigiendo cita.
+
+### Diagnóstico por consola
+
+```powershell
+python .\scripts\diagnose_ollama.py
+```
+
+Resultado esperado:
+
+```json
+{
+  "ready": true,
+  "service_available": true,
+  "model_installed": true,
+  "configured_model": "qwen3:1.7b",
+  "estimated_cost_usd": 0.0
+}
+```
+
+### Validación v0.7.2
+
+```powershell
+python -c "from importlib.metadata import version; import ius_razon; print(version('ius-razon')); print(ius_razon.__version__)"
+ruff check .
+python -m mypy --config-file .\pyproject.toml src
+pytest -q
+```
+
+Resultado previsto:
+
+```text
+0.7.2
+0.7.2
+All checks passed!
+Success: no issues found
+159 passed
 ```
 
