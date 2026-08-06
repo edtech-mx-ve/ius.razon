@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import streamlit as st
 
 from ius_razon.ui.accessibility import accessibility_css
+from ius_razon.ui.branding import render_brand_footer, render_brand_header
 from ius_razon.ui.navigation import (
     NavigationItem,
     get_navigation_item,
@@ -31,17 +33,23 @@ def render_accessibility_foundation() -> None:
     )
 
 
-def render_app_header(*, version: str, public_demo: bool) -> None:
-    """Muestra el encabezado principal y el estado del entorno."""
+def render_app_header(
+    *,
+    version: str,
+    sprint: str,
+    public_demo: bool,
+    project_root: Path,
+) -> None:
+    """Muestra la identidad principal y el estado del entorno."""
 
     st.markdown(
         '<div id="ius-main-content" tabindex="-1"></div>',
         unsafe_allow_html=True,
     )
-    st.title("⚖️ IUS-Razón")
+    render_brand_header(project_root)
     st.caption(
         "Sistema de Análisis, Argumentación y Estrategia Jurídica "
-        f"· Sprint 5.2 v{version}"
+        f"· Sprint {sprint} v{version}"
     )
     if public_demo:
         st.info(
@@ -49,6 +57,11 @@ def render_app_header(*, version: str, public_demo: bool) -> None:
             "y gate de privacidad activo."
         )
 
+
+def render_app_footer(*, project_root: Path) -> None:
+    """Muestra la firma institucional al final del contenido."""
+
+    render_brand_footer(project_root)
 
 def render_sidebar_navigation(case_id: str) -> NavigationItem:
     """Renderiza navegación agrupada y devuelve una única vista activa."""

@@ -82,6 +82,7 @@ from ius_razon.services.privacy_service import PrivacyService
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.app_shell import (
     render_accessibility_foundation,
+    render_app_footer,
     render_app_header,
     render_section_context,
     render_sidebar_navigation,
@@ -3419,7 +3420,9 @@ def main() -> None:
     render_accessibility_foundation()
     render_app_header(
         version="0.8.1",
+        sprint="5.4",
         public_demo=privacy_settings.public_demo,
+        project_root=PROJECT_ROOT,
     )
     render_notice()
 
@@ -3468,6 +3471,7 @@ def main() -> None:
             y carga de una sola vista por interacción.
             """
         )
+        render_app_footer(project_root=PROJECT_ROOT)
         return
 
     if selected_navigation is None:
@@ -3480,6 +3484,7 @@ def main() -> None:
         selected_navigation.page_id,
         selected_case_id,
     )
+    render_app_footer(project_root=PROJECT_ROOT)
 
 
 if __name__ == "__main__":
