@@ -401,7 +401,11 @@ def render_llm_assistant(
     state_key = f"llm_current_draft_{case_id}_{issue_id}"
     if submitted:
         try:
-            record = assistant_service.generate_draft(request)
+            with st.spinner(
+                "Generando un borrador controlado. "
+                "La aplicación conservará trazabilidad y auditoría..."
+            ):
+                record = assistant_service.generate_draft(request)
             st.session_state[state_key] = record.id
             st.success(
                 f"Borrador {record.code} generado. "

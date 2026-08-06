@@ -57,9 +57,18 @@ def render_privacy_center(
         "Ejecutar análisis de privacidad",
         type="primary",
         key=f"privacy_scan_{case_id}",
+        help=(
+            "Analiza patrones sensibles sin mostrar ni almacenar "
+            "los valores detectados."
+        ),
     ):
         try:
-            st.session_state[report_key] = privacy_service.scan_case(case_id)
+            with st.spinner(
+                "Analizando el expediente sin revelar valores sensibles..."
+            ):
+                st.session_state[report_key] = privacy_service.scan_case(
+                    case_id
+                )
         except Exception as exc:
             st.error(f"No fue posible analizar el expediente: {exc}")
 
@@ -99,6 +108,10 @@ def _render_report(
         )
 
     if report.findings:
+        st.caption(
+            "La tabla contiene ubicaciones y huellas irreversibles; "
+            "no incluye los valores originales."
+        )
         st.dataframe(
             [
                 {

@@ -1,19 +1,39 @@
-# IUS-Razón — Sprint 5.1 (v0.8.0)
+# IUS-Razón — Sprint 5.2 (v0.8.1)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
 borradores asistivos bajo control humano.
 
-El motor determinista permanece en la versión 3.2.0. Sprint 5.1 añade un
-centro de privacidad para preparar datos sintéticos de demostración: detecta
-patrones sensibles sin conservar sus valores, oculta rutas y bloquea cargas en
-modo público, y puede impedir exportaciones hasta obtener un análisis limpio.
+El motor determinista permanece en la versión 3.2.0. Sprint 5.2 añade
+navegación agrupada, carga de una sola vista, mejoras responsivas y controles
+de accesibilidad. El centro de privacidad de Sprint 5.1 permanece activo para
+preparar datos sintéticos y bloquear exposiciones inseguras.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
 > obligatoriedad o aplicabilidad de fuentes.
 
+## Incremento Sprint 5.2
 
+La versión 0.8.1 reemplaza la barra de 19 pestañas por navegación agrupada
+en la barra lateral. Streamlit renderiza únicamente la sección activa, lo que
+reduce consultas, formularios y componentes ejecutados en cada interacción.
+
+Controles principales:
+
+- seis áreas de trabajo y 19 rutas funcionales registradas de forma explícita;
+- una sola vista activa por rerun;
+- enlace para saltar al contenido principal;
+- foco visible y objetivos táctiles mínimos de 44 px;
+- apilamiento responsivo de columnas en pantallas estrechas;
+- respeto a la preferencia de reducción de movimiento;
+- estados de carga para análisis de privacidad y generación asistiva;
+- observabilidad del tiempo de renderizado sin registrar datos jurídicos;
+- preparación del shell para bienvenida y autenticación en Sprint 5.4;
+- cero cambios de esquema SQLite y cero dependencias nuevas.
+
+La navegación conserva todas las funciones existentes. El cambio afecta la
+presentación y el costo de renderizado, no los datos ni el motor jurídico.
 
 ## Incremento Sprint 5.1
 

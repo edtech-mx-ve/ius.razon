@@ -13,15 +13,21 @@ Estado: implementado en `v0.8.0`.
 
 ## Sprint 5.2 — Interfaz, accesibilidad y rendimiento
 
-- layout móvil primero;
-- navegación más corta;
-- foco visible;
-- etiquetas y ayudas;
-- header y footer;
-- medición de tiempos de render;
-- pruebas en 360, 768, 1024 y 1440 px.
+Estado: implementado en `v0.8.1`.
+
+- navegación agrupada en seis áreas;
+- una sola vista activa por interacción;
+- foco visible y objetivos táctiles mínimos;
+- layout responsivo para 360, 768, 1024 y 1440 px;
+- enlace para saltar al contenido;
+- reducción de movimiento;
+- estados de carga;
+- medición técnica de tiempos de render;
+- pruebas automatizadas de navegación, accesibilidad y rendimiento.
 
 ## Sprint 5.3 — Despliegue reproducible
+
+Estado: pendiente.
 
 - configuración para Streamlit;
 - base sintética;
@@ -31,25 +37,17 @@ Estado: implementado en `v0.8.0`.
 - health check;
 - checklist de privacidad.
 
-## Sprint 5.4 — Landing, documentación y cierre MVP
+## Sprint 5.4 — Bienvenida, acceso protegido y cierre MVP
 
-- landing informativa;
-- guía de usuario;
-- arquitectura final;
-- demo guiada;
-- pruebas de aceptación;
-- release candidate;
-- versión MVP.
+Estado: pendiente.
 
-## Sprint 5.4 — Página de bienvenida y acceso protegido
-
-- Crear una página pública que explique el propósito de IUS-Razón.
-- Mostrar alcance, trazabilidad, revisión humana y privacidad.
-- No cargar expedientes ni repositorios antes de autenticar.
-- Proteger el acceso mediante un proveedor de identidad.
-- Aplicar autorización explícita para usuarios permitidos.
-- Incluir cierre de sesión y pantalla de acceso denegado.
-- No almacenar contraseñas propias en SQLite.
-- Mantener expedientes, rutas, almacenar contraseñas propias en SQLite.
-- Mant auditorías y configuración fuera de la página pública.
-- Validar acceso permitido, acceso denegado y cierre de sesión.
+- página pública que explique el propósito de IUS-Razón;
+- alcance, trazabilidad, revisión humana y privacidad;
+- autenticación antes de cargar expedientes o repositorios;
+- proveedor de identidad y autorización explícita;
+- cierre de sesión y pantalla de acceso denegado;
+- ninguna contraseña propia almacenada en SQLite;
+- expedientes, rutas y auditorías fuera de la página pública;
+- landing informativa y guía de usuario;
+- demo guiada y pruebas de aceptación;
+- release candidate y versión MVP.

@@ -16,6 +16,7 @@ data_test/
 
 data/archived_uploads/
 .env.*
+!.env.example
 *.pyc
 *.db
 *.db-*
@@ -27,3 +28,26 @@ backups/
 *.dist-info/
 build/
 dist/
+
+# Configuracion local de editores
+.vscode/
+.idea/
+*.code-workspace
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secretos locales de Streamlit
+.streamlit/secrets.toml
+
+# Cobertura de pruebas
+.coverage
+.coverage.*
+htmlcov/
+
+# Archivos temporales
+*.tmp
+*.temp
+*.swp

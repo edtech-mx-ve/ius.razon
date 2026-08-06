@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -79,7 +80,14 @@ from ius_razon.services.llm_provider import (
 )
 from ius_razon.services.privacy_service import PrivacyService
 from ius_razon.services.reasoning_service import ReasoningService
+from ius_razon.ui.app_shell import (
+    render_accessibility_foundation,
+    render_app_header,
+    render_section_context,
+    render_sidebar_navigation,
+)
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
+from ius_razon.ui.performance import measure_view_render
 from ius_razon.ui.privacy_view import render_privacy_center
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -88,7 +96,7 @@ st.set_page_config(
     page_title="IUS-Razón",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 
@@ -3355,15 +3363,73 @@ def render_integral_report(case_id: str) -> None:
     )
 
 
+def render_assistant_page(case_id: str) -> None:
+    """Renderiza la vista asistiva con sus dependencias explícitas."""
+
+    render_llm_assistant(
+        case_id,
+        case_service=service,
+        reasoning_service=reasoning_service,
+        assistant_service=llm_assistant_service,
+    )
+
+
+def render_privacy_page(case_id: str) -> None:
+    """Renderiza el centro de privacidad con configuración segura."""
+
+    render_privacy_center(
+        case_id,
+        privacy_service=privacy_service,
+        settings=privacy_settings,
+    )
+
+
+def render_active_page(page_id: str, case_id: str) -> None:
+    """Ejecuta únicamente la vista seleccionada para reducir trabajo."""
+
+    renderers: dict[str, Callable[[str], None]] = {
+        "summary": render_summary,
+        "parties": render_parties,
+        "facts": render_facts,
+        "evidence": render_evidence,
+        "fact_evidence": render_fact_evidence_links,
+        "issues": render_legal_issues,
+        "norms": render_norms,
+        "jurisprudence": render_jurisprudence,
+        "doctrine": render_doctrine,
+        "source_matrix": render_issue_source_matrix,
+        "assertions": render_reasoning_assertions,
+        "rules": render_reasoning_rules,
+        "inference": render_reasoning_inference,
+        "reasoning_management": render_reasoning_management,
+        "safe_correction": render_safe_correction,
+        "argumentation": render_argumentation,
+        "integral_report": render_integral_report,
+        "assistant": render_assistant_page,
+        "privacy": render_privacy_page,
+    }
+    renderer = renderers.get(page_id)
+    if renderer is None:
+        raise ValueError(f"Vista no registrada: {page_id}")
+    with measure_view_render(page_id):
+        renderer(case_id)
+
+
 def main() -> None:
-    st.title("⚖️ IUS-Razón")
-    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 5.1 v0.8.0")
+    render_accessibility_foundation()
+    render_app_header(
+        version="0.8.1",
+        public_demo=privacy_settings.public_demo,
+    )
     render_notice()
 
     with st.sidebar:
         st.header("Expedientes")
         selected_case_id = case_selector()
-        with st.expander("Crear expediente", expanded=selected_case_id is None):
+        with st.expander(
+            "Crear expediente",
+            expanded=selected_case_id is None,
+        ):
             create_case_form()
         with st.expander("Persistencia", expanded=False):
             if privacy_settings.display_storage_paths:
@@ -3372,94 +3438,48 @@ def main() -> None:
                 st.caption("Directorio de datos")
                 st.code(str(app_config.data_dir))
             else:
-                st.info("Rutas locales ocultas por el modo de demostración.")
+                st.info(
+                    "Rutas locales ocultas por el modo de demostración."
+                )
             if startup_backup is not None:
-                st.success(f"Respaldo creado: {startup_backup.name}")
+                st.success(
+                    f"Respaldo creado: {startup_backup.name}"
+                )
             else:
-                st.info("No se creó respaldo porque la base era nueva o estaba vacía.")
+                st.info(
+                    "No se creó respaldo porque la base era nueva "
+                    "o estaba vacía."
+                )
+
+        selected_navigation = (
+            render_sidebar_navigation(selected_case_id)
+            if selected_case_id is not None
+            else None
+        )
 
     if selected_case_id is None:
         st.markdown(
             """
-            ### Comienza creando un expediente
+            ## Comienza creando un expediente
 
-            Sprint 5.1 incorpora un centro de privacidad determinista,
-            bloqueo de cargas y rutas en modo público, y un gate de exportación
-            para impedir la publicación accidental de datos sensibles.
+            IUS-Razón organiza hechos, pruebas, fuentes, reglas,
+            argumentos y conclusiones con trazabilidad. La versión 0.8.1
+            incorpora navegación agrupada, foco visible, diseño responsivo
+            y carga de una sola vista por interacción.
             """
         )
         return
 
-    tabs = st.tabs(
-        [
-            "Resumen",
-            "Partes",
-            "Hechos",
-            "Pruebas",
-            "Hecho–prueba",
-            "Problemas jurídicos",
-            "Normas",
-            "Jurisprudencia",
-            "Doctrina",
-            "Matriz problema–fuente",
-            "Premisas",
-            "Reglas",
-            "Inferencia",
-            "Argumentación",
-            "Informe integral",
-            "Asistente IA",
-            "Gestión razonamiento",
-            "Corrección segura",
-            "Privacidad y demo",
-        ]
+    if selected_navigation is None:
+        raise RuntimeError(
+            "La navegación debe existir para un expediente seleccionado."
+        )
+
+    render_section_context(selected_navigation)
+    render_active_page(
+        selected_navigation.page_id,
+        selected_case_id,
     )
-    with tabs[0]:
-        render_summary(selected_case_id)
-    with tabs[1]:
-        render_parties(selected_case_id)
-    with tabs[2]:
-        render_facts(selected_case_id)
-    with tabs[3]:
-        render_evidence(selected_case_id)
-    with tabs[4]:
-        render_fact_evidence_links(selected_case_id)
-    with tabs[5]:
-        render_legal_issues(selected_case_id)
-    with tabs[6]:
-        render_norms(selected_case_id)
-    with tabs[7]:
-        render_jurisprudence(selected_case_id)
-    with tabs[8]:
-        render_doctrine(selected_case_id)
-    with tabs[9]:
-        render_issue_source_matrix(selected_case_id)
-    with tabs[10]:
-        render_reasoning_assertions(selected_case_id)
-    with tabs[11]:
-        render_reasoning_rules(selected_case_id)
-    with tabs[12]:
-        render_reasoning_inference(selected_case_id)
-    with tabs[13]:
-        render_argumentation(selected_case_id)
-    with tabs[14]:
-        render_integral_report(selected_case_id)
-    with tabs[15]:
-        render_llm_assistant(
-            selected_case_id,
-            case_service=service,
-            reasoning_service=reasoning_service,
-            assistant_service=llm_assistant_service,
-        )
-    with tabs[16]:
-        render_reasoning_management(selected_case_id)
-    with tabs[17]:
-        render_safe_correction(selected_case_id)
-    with tabs[18]:
-        render_privacy_center(
-            selected_case_id,
-            privacy_service=privacy_service,
-            settings=privacy_settings,
-        )
 
 
 if __name__ == "__main__":
