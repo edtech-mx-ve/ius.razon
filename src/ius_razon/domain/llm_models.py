@@ -42,6 +42,7 @@ class ProviderMode(StrEnum):
     """Modo de ejecución del proveedor."""
 
     SIMULATED = "Simulado local"
+    EXTERNAL_TEST = "Prueba externa controlada"
     EXTERNAL = "Proveedor externo"
 
 
@@ -113,6 +114,7 @@ class AssistantRequest(AssistantModel):
     timeout_seconds: int = Field(default=30, ge=5, le=180)
     max_retries: int = Field(default=1, ge=0, le=3)
     allow_fallback: bool = True
+    confirm_single_call: bool = False
 
     @model_validator(mode="after")
     def validate_unique_selections(self) -> AssistantRequest:
@@ -123,11 +125,12 @@ class AssistantRequest(AssistantModel):
         if len(set(self.selected_codes)) != len(self.selected_codes):
             raise ValueError("Los códigos seleccionados no pueden repetirse.")
         if (
-            self.provider_mode is ProviderMode.EXTERNAL
+            self.provider_mode
+            in {ProviderMode.EXTERNAL, ProviderMode.EXTERNAL_TEST}
             and not self.anonymize_parties
         ):
             raise ValueError(
-                "El proveedor externo requiere anonimización de partes."
+                "Los modos externo y de prueba controlada requieren anonimización de partes."
             )
         return self
 

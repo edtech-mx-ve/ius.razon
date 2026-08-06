@@ -22,6 +22,10 @@ from ius_razon.domain.llm_models import (
 from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
 from ius_razon.security.llm_external_config import ExternalProviderSettings
+from ius_razon.security.llm_external_test import (
+    ControlledExternalTestError,
+    ControlledExternalTestPolicy,
+)
 from ius_razon.security.llm_guardrails import (
     anonymize_context_items,
     anonymize_text,
@@ -67,6 +71,8 @@ class LLMAssistantService:
         external_provider: LLMProvider | None = None,
         external_settings: ExternalProviderSettings | None = None,
         external_configuration_error: str | None = None,
+        integration_test_provider: LLMProvider | None = None,
+        integration_test_policy: ControlledExternalTestPolicy | None = None,
     ) -> None:
         self._case_service = case_service
         self._reasoning_service = reasoning_service
@@ -75,6 +81,8 @@ class LLMAssistantService:
         self._external_provider = external_provider
         self._external_settings = external_settings
         self._external_configuration_error = external_configuration_error
+        self._integration_test_provider = integration_test_provider
+        self._integration_test_policy = integration_test_policy
         self._repository = repository
         self._backup_dir = backup_dir
 
@@ -117,6 +125,29 @@ class LLMAssistantService:
                 "api_key_configured": False,
             }
         return self._external_settings.safe_summary()
+
+    @property
+    def integration_test_available(self) -> bool:
+        """Indica si el proveedor falso de integración está disponible."""
+
+        return bool(
+            self._integration_test_provider is not None
+            and self._integration_test_policy is not None
+        )
+
+    @property
+    def integration_test_safe_summary(self) -> dict[str, object]:
+        """Expone el perfil fijo de prueba sin contenido ni secretos."""
+
+        if self._integration_test_policy is None:
+            return {
+                "network_enabled": False,
+                "api_key_required": False,
+                "configured": False,
+            }
+        summary = self._integration_test_policy.safe_summary()
+        summary["configured"] = self.integration_test_available
+        return summary
 
     def list_context_items(
         self,
@@ -273,18 +304,33 @@ class LLMAssistantService:
                 )
                 raise ValueError("El proveedor externo no está configurado.")
             provider = self._external_provider
+        elif request.provider_mode is ProviderMode.EXTERNAL_TEST:
+            self._validate_integration_test_preflight(request, preview)
+            if self._integration_test_provider is None:
+                self._audit_blocked(
+                    request,
+                    preview,
+                    error_code="integration_test_not_configured",
+                )
+                raise ValueError(
+                    "El proveedor falso de integración no está configurado."
+                )
+            provider = self._integration_test_provider
 
         try:
             response = provider.generate(provider_request)
         except ExternalProviderError as exc:
             if (
-                request.provider_mode is ProviderMode.EXTERNAL
+                request.provider_mode
+                in {ProviderMode.EXTERNAL, ProviderMode.EXTERNAL_TEST}
                 and request.allow_fallback
             ):
                 local_response = self._provider.generate(provider_request)
                 response = local_response.model_copy(
                     update={
-                        "external_call": True,
+                        "external_call": (
+                            request.provider_mode is ProviderMode.EXTERNAL
+                        ),
                         "fallback_used": True,
                         "fallback_reason": exc.error_code,
                     }
@@ -423,6 +469,33 @@ class LLMAssistantService:
             )
             raise ValueError("El costo máximo estimado supera el presupuesto autorizado.")
 
+    def _validate_integration_test_preflight(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+    ) -> None:
+        """Aplica el perfil fijo de una sola prueba sin red."""
+
+        policy = self._integration_test_policy
+        if policy is None:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="integration_test_not_configured",
+            )
+            raise ValueError(
+                "La política de prueba externa controlada no está configurada."
+            )
+        try:
+            policy.validate(request, preview)
+        except ControlledExternalTestError as exc:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code=exc.error_code,
+            )
+            raise ValueError(str(exc)) from exc
+
     def _audit_blocked(
         self,
         request: AssistantRequest,
@@ -431,13 +504,27 @@ class LLMAssistantService:
         error_code: str,
     ) -> None:
         settings = self._external_settings
+        if request.provider_mode is ProviderMode.EXTERNAL_TEST:
+            provider_name = (
+                self._integration_test_provider.provider_name
+                if self._integration_test_provider is not None
+                else "Externo falso de integración"
+            )
+            model_name = (
+                self._integration_test_provider.model_name
+                if self._integration_test_provider is not None
+                else "no-configurado"
+            )
+        else:
+            provider_name = "Externo JSON controlado"
+            model_name = settings.model if settings else "no-configurado"
         self._repository.add_provider_call(
             ProviderCallAuditCreate(
                 case_id=request.case_id,
                 issue_id=request.issue_id,
                 provider_mode=request.provider_mode,
-                provider_name="Externo JSON controlado",
-                model_name=settings.model if settings else "no-configurado",
+                provider_name=provider_name,
+                model_name=model_name,
                 status=ProviderCallStatus.BLOCKED,
                 selected_codes=[item.code for item in preview.items],
                 input_hash=preview.input_hash,
@@ -467,7 +554,9 @@ class LLMAssistantService:
                 status=ProviderCallStatus.FAILED,
                 selected_codes=[item.code for item in preview.items],
                 input_hash=preview.input_hash,
-                external_call=True,
+                external_call=(
+                    request.provider_mode is ProviderMode.EXTERNAL
+                ),
                 fallback_used=False,
                 estimated_cost_usd=preview.estimated_max_cost_usd,
                 error_code=error_code,

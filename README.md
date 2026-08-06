@@ -289,3 +289,21 @@ http://localhost:8501
 Sprint 4.5 evaluará calidad del proveedor externo con un conjunto de casos,
 métricas de fidelidad, regresiones, comparación de modelos y presupuesto
 acumulado por expediente.
+
+## Sprint 4.4.1 · Prueba externa controlada
+
+La versión 0.6.1 añade un proveedor falso de integración que permite validar
+el flujo externo sin red, sin clave API y sin costo. El perfil exige
+anonimización, consentimiento, una sola invocación, cero reintentos, fallback
+local y revisión humana.
+
+```text
+Entrada máxima: 2048 tokens
+Salida máxima: 256 tokens
+Costo máximo: USD 0.01
+Tiempo máximo: 15 segundos
+Red: desactivada
+```
+
+Este modo no sustituye una prueba con un adaptador comercial específico.
+
