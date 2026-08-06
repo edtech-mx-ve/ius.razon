@@ -1,18 +1,42 @@
-# IUS-Razón — Sprint 4.3.1 (v0.5.1)
+# IUS-Razón — Sprint 4.4 (v0.6.0)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
 borradores asistivos bajo control humano.
 
-El motor determinista permanece en la versión 3.2.0. Sprint 4.3 incorpora un
-asistente desacoplado con proveedor simulado local, selección explícita de
-contexto, anonimización, referencias internas, evaluación de respaldo y flujo
-de aprobación o rechazo.
+El motor determinista permanece en la versión 3.2.0. Sprint 4.4 conserva el
+proveedor simulado local e incorpora un proveedor HTTPS externo opcional,
+desactivado por defecto, con consentimiento explícito, límites de uso,
+anonimización obligatoria, fallback local y auditoría sin secretos.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
 > obligatoriedad o aplicabilidad de fuentes.
 
+
+## Incremento Sprint 4.4
+
+La versión 0.6.0 añade un adaptador JSON HTTPS desacoplado. La aplicación puede
+operar en dos modos:
+
+```text
+Simulado local      → sin red, sin clave y reproducible
+Proveedor externo   → opt-in, HTTPS, anonimizado y auditado
+```
+
+Antes de cualquier llamada externa, la interfaz muestra los códigos exactos,
+cantidad de caracteres, tokens estimados, costo máximo estimado y señales de
+riesgo. La llamada solo se habilita cuando la persona confirma que revisó el
+contexto, autoriza esa llamada específica y acepta el límite de costo.
+
+El endpoint externo debe aceptar un objeto JSON con `model`,
+`system_instruction`, `task`, `instructions`, `context`, `allowed_codes` y
+`max_output_tokens`. Debe responder con `output_text` o `text`; opcionalmente
+puede incluir `request_id` y `usage.input_tokens`/`usage.output_tokens`.
+
+El sistema registra proveedor, modelo, estado, códigos seleccionados, huellas,
+tokens, costo estimado, fallback y decisión humana. No registra la clave API,
+el encabezado de autorización ni el prompt completo en la tabla de auditoría.
 
 ## Hotfix Sprint 4.3.1
 
@@ -64,18 +88,21 @@ La pestaña `Asistente IA` permite:
 
 ## Seguridad y privacidad
 
-La versión 0.5.1 funciona exclusivamente con:
+El modo externo está desactivado por defecto. La clave se lee únicamente desde
+`IUS_RAZON_LLM_API_KEY` y se envía en memoria mediante el encabezado
+`Authorization`; no se guarda en SQLite, Git, logs ni borradores.
 
-```text
-Proveedor: Simulado local
-Modelo: ius-razon-mock-v1
-Llamadas externas: ninguna
-Clave API: no requerida ni aceptada
-```
+Controles del modo externo:
 
-El sistema no envía datos por red. Los logs registran identificadores,
-proveedor, modelo y huellas, pero no registran el texto del expediente ni el
-borrador. La anonimización es opcional y está activada por defecto.
+- endpoint HTTPS absoluto y sin credenciales incrustadas;
+- anonimización obligatoria de alias registrados;
+- selección explícita de cada elemento;
+- tres confirmaciones de consentimiento;
+- límites de entrada, salida, costo, tiempo y reintentos;
+- bloqueo ante señales de inyección no reconocidas;
+- fallback local opcional;
+- revisión humana obligatoria antes de aprobar;
+- auditoría separada sin contenido ni secretos.
 
 Las instrucciones encontradas dentro de hechos, pruebas o fuentes se tratan
 como datos. La detección es heurística y no reemplaza la revisión humana.
@@ -157,7 +184,7 @@ Aplica el parche:
 
 ```powershell
 Expand-Archive `
-    .\IUS_Razon_Sprint_4_3_1_patch_v0.5.1.zip `
+    .\IUS_Razon_Sprint_4_4_patch_v0.6.0.zip `
     -DestinationPath . `
     -Force
 ```
@@ -181,8 +208,8 @@ python -c "from importlib.metadata import version; import ius_razon; print('Inst
 Resultado esperado:
 
 ```text
-Instalada: 0.5.1
-Módulo: 0.5.1
+Instalada: 0.6.0
+Módulo: 0.6.0
 Ruta: ...\src\ius_razon\__init__.py
 ```
 
@@ -199,7 +226,7 @@ Resultado esperado:
 ```text
 All checks passed!
 Success: no issues found
-88 passed
+100 passed
 ```
 
 Inicia la interfaz:
@@ -249,17 +276,16 @@ http://localhost:8501
 
 ## Limitaciones
 
-- el proveedor simulado no realiza razonamiento generativo real;
+- el adaptador externo usa un contrato JSON genérico y puede requerir un
+  gateway para proveedores con esquemas propietarios;
+- la estimación de tokens por caracteres es aproximada;
+- el costo depende de tarifas configuradas por el usuario;
 - la detección de inyección y de afirmaciones sin soporte es heurística;
-- la cobertura de citas mide forma de trazabilidad, no verdad jurídica;
-- la anonimización sustituye alias registrados, no entidades no registradas;
-- no existe todavía conexión con un proveedor remoto o modelo local real;
-- los borradores aprobados no se incorporan automáticamente al informe
-  jurídico integral.
+- la cobertura de citas mide trazabilidad formal, no verdad jurídica;
+- los borradores aprobados no se incorporan automáticamente al informe.
 
 ## Próximo incremento
 
-Sprint 4.3.1 conectará un proveedor real opcional mediante variables de
-entorno, consentimiento explícito, vista previa exacta del contexto, control
-de tiempo y costo, reintentos limitados y pruebas contractuales. El modo
-simulado seguirá disponible para desarrollo y pruebas.
+Sprint 4.5 evaluará calidad del proveedor externo con un conjunto de casos,
+métricas de fidelidad, regresiones, comparación de modelos y presupuesto
+acumulado por expediente.

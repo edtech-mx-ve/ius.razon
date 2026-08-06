@@ -38,6 +38,22 @@ class DraftStatus(StrEnum):
     REJECTED = "Rechazado"
 
 
+class ProviderMode(StrEnum):
+    """Modo de ejecución del proveedor."""
+
+    SIMULATED = "Simulado local"
+    EXTERNAL = "Proveedor externo"
+
+
+class ProviderCallStatus(StrEnum):
+    """Resultado auditable de una invocación al proveedor."""
+
+    SUCCEEDED = "Completada"
+    FALLBACK = "Fallback local"
+    FAILED = "Fallida"
+    BLOCKED = "Bloqueada"
+
+
 class AssistantModel(BaseModel):
     """Configuración base para modelos del asistente."""
 
@@ -57,6 +73,24 @@ class ContextItem(AssistantModel):
     source_id: str | None = Field(default=None, max_length=120)
 
 
+class ExternalConsent(AssistantModel):
+    """Consentimiento explícito para una llamada fuera del equipo."""
+
+    reviewed_context: bool = False
+    authorized_external_call: bool = False
+    accepted_cost_limit: bool = False
+
+    @property
+    def complete(self) -> bool:
+        """Indica si las tres confirmaciones fueron otorgadas."""
+
+        return (
+            self.reviewed_context
+            and self.authorized_external_call
+            and self.accepted_cost_limit
+        )
+
+
 class AssistantRequest(AssistantModel):
     """Solicitud controlada para generar un borrador."""
 
@@ -70,15 +104,31 @@ class AssistantRequest(AssistantModel):
     anonymize_parties: bool = True
     max_context_chars: int = Field(default=12000, ge=1000, le=50000)
     max_output_chars: int = Field(default=8000, ge=500, le=20000)
+    provider_mode: ProviderMode = ProviderMode.SIMULATED
+    external_consent: ExternalConsent | None = None
+    acknowledge_risk_flags: bool = False
+    max_input_tokens: int = Field(default=16000, ge=256, le=200000)
+    max_output_tokens: int = Field(default=2000, ge=64, le=32000)
+    max_cost_usd: float = Field(default=0.10, ge=0.0, le=100.0)
+    timeout_seconds: int = Field(default=30, ge=5, le=180)
+    max_retries: int = Field(default=1, ge=0, le=3)
+    allow_fallback: bool = True
 
     @model_validator(mode="after")
     def validate_unique_selections(self) -> AssistantRequest:
-        """Evita selecciones duplicadas y ambiguas."""
+        """Evita selecciones duplicadas y consentimiento ambiguo."""
 
         if len(set(self.selected_categories)) != len(self.selected_categories):
             raise ValueError("Las categorías seleccionadas no pueden repetirse.")
         if len(set(self.selected_codes)) != len(self.selected_codes):
             raise ValueError("Los códigos seleccionados no pueden repetirse.")
+        if (
+            self.provider_mode is ProviderMode.EXTERNAL
+            and not self.anonymize_parties
+        ):
+            raise ValueError(
+                "El proveedor externo requiere anonimización de partes."
+            )
         return self
 
 
@@ -90,6 +140,10 @@ class ContextPreview(AssistantModel):
     anonymization_map: dict[str, str] = Field(default_factory=dict)
     char_count: int = Field(ge=1)
     input_hash: Annotated[str, Field(min_length=64, max_length=64)]
+    provider_mode: ProviderMode = ProviderMode.SIMULATED
+    estimated_input_tokens: int = Field(default=0, ge=0)
+    estimated_output_tokens: int = Field(default=0, ge=0)
+    estimated_max_cost_usd: float = Field(default=0.0, ge=0.0)
 
 
 class ProviderRequest(AssistantModel):
@@ -101,6 +155,10 @@ class ProviderRequest(AssistantModel):
     allowed_codes: list[str] = Field(min_length=1)
     max_output_chars: int = Field(ge=500, le=20000)
     system_instruction: Annotated[str, Field(min_length=20, max_length=4000)]
+    max_output_tokens: int = Field(default=2000, ge=64, le=32000)
+    timeout_seconds: int = Field(default=30, ge=5, le=180)
+    max_retries: int = Field(default=1, ge=0, le=3)
+    max_cost_usd: float = Field(default=0.10, ge=0.0, le=100.0)
 
 
 class ProviderResponse(AssistantModel):
@@ -110,6 +168,13 @@ class ProviderResponse(AssistantModel):
     provider_name: Annotated[str, Field(min_length=2, max_length=120)]
     model_name: Annotated[str, Field(min_length=2, max_length=160)]
     generated_at: datetime = Field(default_factory=utc_now)
+    request_id: str | None = Field(default=None, max_length=240)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
+    external_call: bool = False
+    fallback_used: bool = False
+    fallback_reason: str | None = Field(default=None, max_length=1000)
 
 
 class DraftEvaluation(AssistantModel):
@@ -140,6 +205,14 @@ class AssistantDraftCreate(AssistantModel):
     citation_coverage: float = Field(ge=0.0, le=1.0)
     input_hash: Annotated[str, Field(min_length=64, max_length=64)]
     output_hash: Annotated[str, Field(min_length=64, max_length=64)]
+    provider_mode: ProviderMode = ProviderMode.SIMULATED
+    external_call: bool = False
+    fallback_used: bool = False
+    fallback_reason: str | None = Field(default=None, max_length=1000)
+    provider_request_id: str | None = Field(default=None, max_length=240)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
 
 
 class AssistantDraftRecord(AssistantDraftCreate):
@@ -152,6 +225,34 @@ class AssistantDraftRecord(AssistantDraftCreate):
     reviewer_note: str | None = None
     created_at: datetime
     reviewed_at: datetime | None = None
+
+
+class ProviderCallAuditCreate(AssistantModel):
+    """Evento de auditoría sin contenido ni secretos."""
+
+    case_id: str
+    issue_id: str
+    provider_mode: ProviderMode
+    provider_name: str
+    model_name: str
+    status: ProviderCallStatus
+    selected_codes: list[str]
+    input_hash: Annotated[str, Field(min_length=64, max_length=64)]
+    output_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    external_call: bool = False
+    fallback_used: bool = False
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
+    error_code: str | None = Field(default=None, max_length=120)
+
+
+class ProviderCallAuditRecord(ProviderCallAuditCreate):
+    """Evento persistido de auditoría."""
+
+    id: str
+    draft_id: str | None = None
+    created_at: datetime
 
 
 class DraftReview(AssistantModel):
