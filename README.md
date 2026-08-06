@@ -307,3 +307,67 @@ Red: desactivada
 
 Este modo no sustituye una prueba con un adaptador comercial específico.
 
+## Sprint 4.5 · Adaptador específico OpenAI Responses API
+
+La versión 0.7.0 incorpora un adaptador específico para OpenAI mediante el
+endpoint fijo `https://api.openai.com/v1/responses`. El adaptador usa la
+biblioteca estándar de Python, no añade dependencias y permanece desactivado
+hasta que todas las variables requeridas estén configuradas.
+
+Controles obligatorios:
+
+- anonimización de partes;
+- selección exacta de contexto;
+- tres confirmaciones de consentimiento;
+- confirmación de una sola llamada real;
+- cero reintentos;
+- fallback local obligatorio;
+- límite de entrada, salida, tiempo y costo;
+- `store=false`;
+- sin herramientas externas;
+- auditoría sin prompt, respuesta o clave;
+- revisión humana antes de aprobar.
+
+La clave se obtiene exclusivamente desde `OPENAI_API_KEY`. Las tarifas se
+declaran mediante variables de entorno para evitar costos hardcodeados y deben
+revisarse antes de habilitar el proveedor.
+
+La opción `OpenAI Responses API` solo aparece cuando la configuración es válida.
+Los modos `Simulado local` y `Prueba externa controlada` continúan disponibles
+sin red.
+
+### Variables
+
+Consulta `docs/OPENAI_ENV.example.txt`. No copies una clave real en archivos,
+Git, capturas, logs o mensajes.
+
+### Validación
+
+```powershell
+python -c "from importlib.metadata import version; import ius_razon; print(version('ius-razon')); print(ius_razon.__version__)"
+ruff check .
+python -m mypy --config-file .\pyproject.toml src
+pytest -v
+```
+
+Resultado previsto:
+
+```text
+0.7.0
+0.7.0
+All checks passed!
+Success: no issues found
+128 passed
+```
+
+### Limitaciones
+
+- la estimación previa de tokens se basa en caracteres y es aproximada;
+- las tarifas deben actualizarse manualmente según el modelo elegido;
+- una respuesta puede ser rechazada después de la llamada si el uso reportado
+  supera el presupuesto autorizado;
+- el adaptador no verifica la vigencia jurídica de las fuentes;
+- el sprint no realiza llamadas reales durante pruebas automatizadas;
+- una primera llamada real debe usar exclusivamente el expediente de
+  demostración y un contexto reducido.
+

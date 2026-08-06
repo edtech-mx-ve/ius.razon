@@ -37,6 +37,7 @@ from ius_razon.security.llm_guardrails import (
     text_hash,
     truncate_context_items,
 )
+from ius_razon.security.llm_openai_config import OpenAIProviderSettings
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.llm_provider import (
@@ -73,6 +74,9 @@ class LLMAssistantService:
         external_configuration_error: str | None = None,
         integration_test_provider: LLMProvider | None = None,
         integration_test_policy: ControlledExternalTestPolicy | None = None,
+        openai_provider: LLMProvider | None = None,
+        openai_settings: OpenAIProviderSettings | None = None,
+        openai_configuration_error: str | None = None,
     ) -> None:
         self._case_service = case_service
         self._reasoning_service = reasoning_service
@@ -83,6 +87,9 @@ class LLMAssistantService:
         self._external_configuration_error = external_configuration_error
         self._integration_test_provider = integration_test_provider
         self._integration_test_policy = integration_test_policy
+        self._openai_provider = openai_provider
+        self._openai_settings = openai_settings
+        self._openai_configuration_error = openai_configuration_error
         self._repository = repository
         self._backup_dir = backup_dir
 
@@ -148,6 +155,35 @@ class LLMAssistantService:
         summary = self._integration_test_policy.safe_summary()
         summary["configured"] = self.integration_test_available
         return summary
+
+    @property
+    def openai_available(self) -> bool:
+        """Indica si OpenAI está habilitado y configurado."""
+
+        return bool(
+            self._openai_provider is not None
+            and self._openai_settings is not None
+            and self._openai_settings.configured
+        )
+
+    @property
+    def openai_configuration_error(self) -> str | None:
+        """Error seguro de configuración de OpenAI."""
+
+        return self._openai_configuration_error
+
+    @property
+    def openai_safe_summary(self) -> dict[str, object]:
+        """Estado visible de OpenAI sin exponer la clave."""
+
+        if self._openai_settings is None:
+            return {
+                "enabled": False,
+                "configured": False,
+                "api_key_configured": False,
+                "pricing_configured": False,
+            }
+        return self._openai_settings.safe_summary()
 
     def list_context_items(
         self,
@@ -252,6 +288,14 @@ class LLMAssistantService:
                 estimated_input_tokens,
                 request.max_output_tokens,
             )
+        elif (
+            request.provider_mode is ProviderMode.OPENAI
+            and self._openai_settings is not None
+        ):
+            estimated_cost = self._openai_settings.estimate_cost(
+                estimated_input_tokens,
+                request.max_output_tokens,
+            )
         return ContextPreview(
             items=limited,
             risk_flags=risk_flags,
@@ -304,6 +348,16 @@ class LLMAssistantService:
                 )
                 raise ValueError("El proveedor externo no está configurado.")
             provider = self._external_provider
+        elif request.provider_mode is ProviderMode.OPENAI:
+            self._validate_openai_preflight(request, preview)
+            if self._openai_provider is None:
+                self._audit_blocked(
+                    request,
+                    preview,
+                    error_code="openai_not_configured",
+                )
+                raise ValueError("OpenAI no está configurado.")
+            provider = self._openai_provider
         elif request.provider_mode is ProviderMode.EXTERNAL_TEST:
             self._validate_integration_test_preflight(request, preview)
             if self._integration_test_provider is None:
@@ -322,15 +376,18 @@ class LLMAssistantService:
         except ExternalProviderError as exc:
             if (
                 request.provider_mode
-                in {ProviderMode.EXTERNAL, ProviderMode.EXTERNAL_TEST}
+                in {
+                    ProviderMode.EXTERNAL,
+                    ProviderMode.EXTERNAL_TEST,
+                    ProviderMode.OPENAI,
+                }
                 and request.allow_fallback
             ):
                 local_response = self._provider.generate(provider_request)
                 response = local_response.model_copy(
                     update={
-                        "external_call": (
-                            request.provider_mode is ProviderMode.EXTERNAL
-                        ),
+                        "external_call": request.provider_mode
+                        in {ProviderMode.EXTERNAL, ProviderMode.OPENAI},
                         "fallback_used": True,
                         "fallback_reason": exc.error_code,
                     }
@@ -469,6 +526,87 @@ class LLMAssistantService:
             )
             raise ValueError("El costo máximo estimado supera el presupuesto autorizado.")
 
+    def _validate_openai_preflight(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+    ) -> None:
+        """Aplica límites estrictos para una única llamada real a OpenAI."""
+
+        consent = request.external_consent
+        if consent is None or not consent.complete:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="consent_incomplete",
+            )
+            raise ValueError(
+                "OpenAI requiere las tres confirmaciones de consentimiento."
+            )
+        settings = self._openai_settings
+        if settings is None or not settings.configured:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="openai_not_configured",
+            )
+            raise ValueError("OpenAI no está configurado.")
+        if not request.confirm_single_call:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="single_call_not_confirmed",
+            )
+            raise ValueError(
+                "Debes confirmar una sola llamada real y cero reintentos."
+            )
+        if request.max_retries != 0:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="retries_not_allowed",
+            )
+            raise ValueError("La primera llamada a OpenAI exige cero reintentos.")
+        if not request.allow_fallback:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="fallback_required",
+            )
+            raise ValueError("La primera llamada a OpenAI exige fallback local.")
+        if preview.risk_flags and not request.acknowledge_risk_flags:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="risk_flags_not_acknowledged",
+            )
+            raise ValueError(
+                "Revisa las señales de instrucciones incrustadas antes del envío."
+            )
+        input_limit = min(request.max_input_tokens, settings.max_input_tokens)
+        if preview.estimated_input_tokens > input_limit:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="input_token_limit",
+            )
+            raise ValueError("El contexto supera el límite de entrada de OpenAI.")
+        if request.max_output_tokens > settings.max_output_tokens:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="output_token_limit",
+            )
+            raise ValueError("La salida supera el límite configurado para OpenAI.")
+        cost_limit = min(request.max_cost_usd, settings.max_cost_usd)
+        if preview.estimated_max_cost_usd > cost_limit:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="cost_limit",
+            )
+            raise ValueError("El costo estimado supera el presupuesto autorizado.")
+
     def _validate_integration_test_preflight(
         self,
         request: AssistantRequest,
@@ -504,7 +642,14 @@ class LLMAssistantService:
         error_code: str,
     ) -> None:
         settings = self._external_settings
-        if request.provider_mode is ProviderMode.EXTERNAL_TEST:
+        if request.provider_mode is ProviderMode.OPENAI:
+            provider_name = "OpenAI Responses API"
+            model_name = (
+                self._openai_settings.model
+                if self._openai_settings is not None
+                else "no-configurado"
+            )
+        elif request.provider_mode is ProviderMode.EXTERNAL_TEST:
             provider_name = (
                 self._integration_test_provider.provider_name
                 if self._integration_test_provider is not None
@@ -554,9 +699,8 @@ class LLMAssistantService:
                 status=ProviderCallStatus.FAILED,
                 selected_codes=[item.code for item in preview.items],
                 input_hash=preview.input_hash,
-                external_call=(
-                    request.provider_mode is ProviderMode.EXTERNAL
-                ),
+                external_call=request.provider_mode
+                in {ProviderMode.EXTERNAL, ProviderMode.OPENAI},
                 fallback_used=False,
                 estimated_cost_usd=preview.estimated_max_cost_usd,
                 error_code=error_code,

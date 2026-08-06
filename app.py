@@ -66,6 +66,10 @@ from ius_razon.security.llm_external_config import (
     ExternalProviderSettings,
 )
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
+from ius_razon.security.llm_openai_config import (
+    OpenAIProviderConfigurationError,
+    OpenAIProviderSettings,
+)
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
@@ -74,6 +78,7 @@ from ius_razon.services.llm_provider import (
     ControlledExternalTestProvider,
     DeterministicMockProvider,
     ExternalHTTPProvider,
+    OpenAIResponsesProvider,
 )
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
@@ -140,6 +145,19 @@ def build_services() -> tuple[
         if external_settings.configured
         else None
     )
+
+    openai_error: str | None = None
+    try:
+        openai_settings = OpenAIProviderSettings.from_env()
+    except OpenAIProviderConfigurationError as exc:
+        openai_error = str(exc)
+        openai_settings = OpenAIProviderSettings()
+
+    openai_provider = (
+        OpenAIResponsesProvider(openai_settings)
+        if openai_settings.configured
+        else None
+    )
     llm_assistant = LLMAssistantService(
         case_service=case_service,
         reasoning_service=reasoning,
@@ -150,6 +168,9 @@ def build_services() -> tuple[
         external_configuration_error=external_error,
         integration_test_provider=ControlledExternalTestProvider(),
         integration_test_policy=ControlledExternalTestPolicy(),
+        openai_provider=openai_provider,
+        openai_settings=openai_settings,
+        openai_configuration_error=openai_error,
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )
