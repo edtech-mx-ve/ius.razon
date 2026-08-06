@@ -66,6 +66,7 @@ from ius_razon.security.llm_ollama_config import (
     OllamaProviderConfigurationError,
     OllamaProviderSettings,
 )
+from ius_razon.security.privacy_config import PrivacySettings
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
@@ -76,8 +77,10 @@ from ius_razon.services.llm_provider import (
     DeterministicMockProvider,
     OllamaLocalProvider,
 )
+from ius_razon.services.privacy_service import PrivacyService
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
+from ius_razon.ui.privacy_view import render_privacy_center
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -96,6 +99,8 @@ def build_services() -> tuple[
     ArgumentationService,
     LegalReportService,
     LLMAssistantService,
+    PrivacyService,
+    PrivacySettings,
     AppConfig,
     Path | None,
 ]:
@@ -160,12 +165,19 @@ def build_services() -> tuple[
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )
+    privacy_settings = PrivacySettings.from_env()
+    privacy_service = PrivacyService(
+        case_source=case_service,
+        settings=privacy_settings,
+    )
     return (
         case_service,
         reasoning,
         argumentation,
         report_service,
         llm_assistant,
+        privacy_service,
+        privacy_settings,
         config,
         backup_path,
     )
@@ -177,6 +189,8 @@ def build_services() -> tuple[
     argumentation_service,
     legal_report_service,
     llm_assistant_service,
+    privacy_service,
+    privacy_settings,
     app_config,
     startup_backup,
 ) = build_services()
@@ -193,7 +207,29 @@ def optional_upload(uploaded: Any) -> tuple[str | None, bytes | None]:
 
     if uploaded is None:
         return None, None
+    if not privacy_settings.uploads_enabled:
+        raise ValueError(
+            "Las cargas están deshabilitadas en modo de demostración pública."
+        )
     return str(uploaded.name), bytes(uploaded.getvalue())
+
+
+def privacy_export_blocked(case_id: str) -> bool:
+    """Aplica el gate solo cuando la configuración exige un análisis limpio."""
+
+    if (
+        not privacy_settings.public_demo
+        and not privacy_settings.require_clean_scan_for_export
+    ):
+        return False
+    allowed, report = privacy_service.can_export(case_id)
+    if allowed:
+        return False
+    st.error(
+        "Exportación bloqueada por privacidad: "
+        f"{len(report.findings)} hallazgos requieren revisión."
+    )
+    return True
 
 
 def render_notice() -> None:
@@ -443,6 +479,7 @@ def render_evidence(case_id: str) -> None:
         uploaded = st.file_uploader(
             "Archivo opcional",
             type=["pdf", "txt", "docx", "png", "jpg", "jpeg"],
+            disabled=not privacy_settings.uploads_enabled,
         )
         col1, col2 = st.columns(2)
         with col1:
@@ -625,6 +662,7 @@ def render_norms(case_id: str) -> None:
             "Documento de respaldo opcional",
             type=["pdf", "txt", "docx"],
             key="norm_file",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Agregar norma", type="primary"):
             try:
@@ -715,6 +753,7 @@ def render_jurisprudence(case_id: str) -> None:
             "Resolución o documento opcional",
             type=["pdf", "txt", "docx"],
             key="jurisprudence_file",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Agregar jurisprudencia", type="primary"):
             try:
@@ -798,6 +837,7 @@ def render_doctrine(case_id: str) -> None:
             "Documento de respaldo opcional",
             type=["pdf", "txt", "docx"],
             key="doctrine_file",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Agregar doctrina", type="primary"):
             try:
@@ -1111,6 +1151,7 @@ def render_norm_correction(case_id: str) -> None:
             "Nuevo documento de respaldo opcional",
             type=["pdf", "txt", "docx"],
             key=f"correction_norm_file_{item.id}",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Guardar corrección", type="primary"):
             try:
@@ -1243,6 +1284,7 @@ def render_jurisprudence_correction(case_id: str) -> None:
             "Nueva resolución o documento opcional",
             type=["pdf", "txt", "docx"],
             key=f"correction_jurisprudence_file_{item.id}",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Guardar corrección", type="primary"):
             try:
@@ -1359,6 +1401,7 @@ def render_doctrine_correction(case_id: str) -> None:
             "Nuevo documento de respaldo opcional",
             type=["pdf", "txt", "docx"],
             key=f"correction_doctrine_file_{item.id}",
+            disabled=not privacy_settings.uploads_enabled,
         )
         if st.form_submit_button("Guardar corrección", type="primary"):
             try:
@@ -2253,6 +2296,7 @@ def render_reasoning_report(run_id: str) -> None:
     )
 
     st.markdown("#### Exportación reproducible")
+    exports_blocked = privacy_export_blocked(report.run.case_id)
     export_columns = st.columns(2)
     export_columns[0].download_button(
         "Descargar JSON",
@@ -2260,6 +2304,7 @@ def render_reasoning_report(run_id: str) -> None:
         file_name=f"ius_razon_{run_id[:8]}.json",
         mime="application/json",
         key=f"download_reasoning_json_{run_id}",
+        disabled=exports_blocked,
     )
     export_columns[1].download_button(
         "Descargar Markdown",
@@ -2267,6 +2312,7 @@ def render_reasoning_report(run_id: str) -> None:
         file_name=f"ius_razon_{run_id[:8]}.md",
         mime="text/markdown",
         key=f"download_reasoning_markdown_{run_id}",
+        disabled=exports_blocked,
     )
     if report.run.input_snapshot:
         with st.expander("Entradas exactas de esta ejecución"):
@@ -2622,6 +2668,7 @@ def render_argument_graph_and_scenarios(
     for warning in graph.warnings:
         st.warning(warning)
 
+    exports_blocked = privacy_export_blocked(case_id)
     graph_exports = st.columns(3)
     graph_exports[0].download_button(
         "Descargar grafo JSON",
@@ -2633,6 +2680,7 @@ def render_argument_graph_and_scenarios(
         file_name=f"ius_razon_grafo_{issue_id[:8]}.json",
         mime="application/json",
         key=f"graph_json_{issue_id}_{selected_scenario_id}",
+        disabled=exports_blocked,
     )
     graph_exports[1].download_button(
         "Descargar grafo Markdown",
@@ -2644,6 +2692,7 @@ def render_argument_graph_and_scenarios(
         file_name=f"ius_razon_grafo_{issue_id[:8]}.md",
         mime="text/markdown",
         key=f"graph_markdown_{issue_id}_{selected_scenario_id}",
+        disabled=exports_blocked,
     )
     graph_exports[2].download_button(
         "Descargar DOT",
@@ -2655,6 +2704,7 @@ def render_argument_graph_and_scenarios(
         file_name=f"ius_razon_grafo_{issue_id[:8]}.dot",
         mime="text/vnd.graphviz",
         key=f"graph_dot_{issue_id}_{selected_scenario_id}",
+        disabled=exports_blocked,
     )
 
     if len(view_options) >= 2:
@@ -3032,6 +3082,7 @@ def render_argumentation(case_id: str) -> None:
         )
 
     st.markdown("### Exportación")
+    exports_blocked = privacy_export_blocked(case_id)
     export_columns = st.columns(3)
     export_columns[0].download_button(
         "Descargar JSON",
@@ -3039,6 +3090,7 @@ def render_argumentation(case_id: str) -> None:
         file_name=f"ius_razon_argumentacion_{issue_id[:8]}.json",
         mime="application/json",
         key=f"argumentation_json_{issue_id}",
+        disabled=exports_blocked,
     )
     export_columns[1].download_button(
         "Descargar Markdown",
@@ -3046,6 +3098,7 @@ def render_argumentation(case_id: str) -> None:
         file_name=f"ius_razon_argumentacion_{issue_id[:8]}.md",
         mime="text/markdown",
         key=f"argumentation_markdown_{issue_id}",
+        disabled=exports_blocked,
     )
     export_columns[2].download_button(
         "Descargar DOCX",
@@ -3056,6 +3109,7 @@ def render_argumentation(case_id: str) -> None:
             "wordprocessingml.document"
         ),
         key=f"argumentation_docx_{issue_id}",
+        disabled=exports_blocked,
     )
 
 
@@ -3270,6 +3324,7 @@ def render_integral_report(case_id: str) -> None:
             st.write(f"- {limitation}")
 
     st.markdown("### Exportación integral")
+    exports_blocked = privacy_export_blocked(case_id)
     exports = st.columns(3)
     exports[0].download_button(
         "Descargar JSON integral",
@@ -3277,6 +3332,7 @@ def render_integral_report(case_id: str) -> None:
         file_name=f"ius_razon_informe_integral_{issue_id[:8]}.json",
         mime="application/json",
         key=f"integral_json_{issue_id}_{report.input_hash[:8]}",
+        disabled=exports_blocked,
     )
     exports[1].download_button(
         "Descargar Markdown integral",
@@ -3284,6 +3340,7 @@ def render_integral_report(case_id: str) -> None:
         file_name=f"ius_razon_informe_integral_{issue_id[:8]}.md",
         mime="text/markdown",
         key=f"integral_markdown_{issue_id}_{report.input_hash[:8]}",
+        disabled=exports_blocked,
     )
     exports[2].download_button(
         "Descargar DOCX integral",
@@ -3294,12 +3351,13 @@ def render_integral_report(case_id: str) -> None:
             "wordprocessingml.document"
         ),
         key=f"integral_docx_{issue_id}_{report.input_hash[:8]}",
+        disabled=exports_blocked,
     )
 
 
 def main() -> None:
     st.title("⚖️ IUS-Razón")
-    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 4.3.1 v0.5.1")
+    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 5.1 v0.8.0")
     render_notice()
 
     with st.sidebar:
@@ -3308,10 +3366,13 @@ def main() -> None:
         with st.expander("Crear expediente", expanded=selected_case_id is None):
             create_case_form()
         with st.expander("Persistencia", expanded=False):
-            st.caption("Base SQLite activa")
-            st.code(str(app_config.db_path))
-            st.caption("Directorio de datos")
-            st.code(str(app_config.data_dir))
+            if privacy_settings.display_storage_paths:
+                st.caption("Base SQLite activa")
+                st.code(str(app_config.db_path))
+                st.caption("Directorio de datos")
+                st.code(str(app_config.data_dir))
+            else:
+                st.info("Rutas locales ocultas por el modo de demostración.")
             if startup_backup is not None:
                 st.success(f"Respaldo creado: {startup_backup.name}")
             else:
@@ -3322,10 +3383,9 @@ def main() -> None:
             """
             ### Comienza creando un expediente
 
-            Sprint 4.3.1 conserva el asistente IA controlado en modo
-            simulado local, con selección explícita de contexto, anonimización,
-            referencias internas, detección de afirmaciones sin respaldo y
-            revisión humana obligatoria.
+            Sprint 5.1 incorpora un centro de privacidad determinista,
+            bloqueo de cargas y rutas en modo público, y un gate de exportación
+            para impedir la publicación accidental de datos sensibles.
             """
         )
         return
@@ -3350,6 +3410,7 @@ def main() -> None:
             "Asistente IA",
             "Gestión razonamiento",
             "Corrección segura",
+            "Privacidad y demo",
         ]
     )
     with tabs[0]:
@@ -3393,6 +3454,12 @@ def main() -> None:
         render_reasoning_management(selected_case_id)
     with tabs[17]:
         render_safe_correction(selected_case_id)
+    with tabs[18]:
+        render_privacy_center(
+            selected_case_id,
+            privacy_service=privacy_service,
+            settings=privacy_settings,
+        )
 
 
 if __name__ == "__main__":

@@ -1,18 +1,59 @@
-# IUS-Razón — Sprint 4.5.2 (v0.7.2)
+# IUS-Razón — Sprint 5.1 (v0.8.0)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
 borradores asistivos bajo control humano.
 
-El motor determinista permanece en la versión 3.2.0. Sprint 4.5.2 robustece
-Ollama como proveedor generativo local gratuito: verifica servicio, versión
-y modelo instalado; limita la selección mediante allowlist; bloquea nombres
-cloud; clasifica fallos y conserva fallback y revisión humana obligatoria.
+El motor determinista permanece en la versión 3.2.0. Sprint 5.1 añade un
+centro de privacidad para preparar datos sintéticos de demostración: detecta
+patrones sensibles sin conservar sus valores, oculta rutas y bloquea cargas en
+modo público, y puede impedir exportaciones hasta obtener un análisis limpio.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
 > obligatoriedad o aplicabilidad de fuentes.
 
+
+
+## Incremento Sprint 5.1
+
+La versión 0.8.0 incorpora una capa transversal de privacidad y preparación de
+datos de demostración.
+
+Controles principales:
+
+- análisis determinista de correo, CURP, RFC, CLABE, tarjeta, teléfono,
+  credenciales, rutas locales y posibles nombres reales;
+- hallazgos sin el valor original: solo categoría, gravedad, ubicación y huella
+  SHA-256 truncada;
+- pestaña `Privacidad y demo` con métricas y reporte JSON seguro;
+- modo público que bloquea cargas y oculta rutas locales;
+- gate opcional para impedir exportaciones con hallazgos bloqueantes;
+- cero cambios de esquema SQLite;
+- pruebas unitarias para reglas, configuración, truncamiento y política de
+  exportación.
+
+Configuración local predeterminada:
+
+```text
+IUS_RAZON_PUBLIC_DEMO=false
+IUS_RAZON_UPLOADS_ENABLED=true
+IUS_RAZON_DISPLAY_STORAGE_PATHS=true
+IUS_RAZON_REQUIRE_CLEAN_PRIVACY_SCAN_FOR_EXPORT=false
+```
+
+Configuración recomendada para una demostración pública:
+
+```text
+IUS_RAZON_PUBLIC_DEMO=true
+IUS_RAZON_UPLOADS_ENABLED=false
+IUS_RAZON_DISPLAY_STORAGE_PATHS=false
+IUS_RAZON_REQUIRE_CLEAN_PRIVACY_SCAN_FOR_EXPORT=true
+```
+
+El modo público no convierte datos reales en datos anónimos. Debe utilizarse
+únicamente con expedientes sintéticos y después de revisar el reporte de
+privacidad.
 
 ## Incremento Sprint 4.4
 

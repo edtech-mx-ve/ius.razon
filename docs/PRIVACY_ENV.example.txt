@@ -1,0 +1,15 @@
+# IUS-Razón v0.8.0 — privacidad y demostración pública
+# No contiene secretos.
+
+# Modo local predeterminado
+IUS_RAZON_PUBLIC_DEMO=false
+IUS_RAZON_UPLOADS_ENABLED=true
+IUS_RAZON_DISPLAY_STORAGE_PATHS=true
+IUS_RAZON_REQUIRE_CLEAN_PRIVACY_SCAN_FOR_EXPORT=false
+IUS_RAZON_PRIVACY_MAX_FINDINGS=200
+
+# Para una demostración pública use:
+# IUS_RAZON_PUBLIC_DEMO=true
+# IUS_RAZON_UPLOADS_ENABLED=false
+# IUS_RAZON_DISPLAY_STORAGE_PATHS=false
+# IUS_RAZON_REQUIRE_CLEAN_PRIVACY_SCAN_FOR_EXPORT=true

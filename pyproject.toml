@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ius-razon"
-version = "0.7.2"
+version = "0.8.0"
 description = "Prototipo local de análisis jurídico estructurado y trazable."
 readme = "README.md"
 requires-python = ">=3.11"
