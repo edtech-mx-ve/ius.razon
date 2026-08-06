@@ -123,6 +123,30 @@ class UrllibJSONTransport:
         return {str(key): value for key, value in parsed.items()}
 
 
+def _ollama_http_error(status: int) -> tuple[str, str]:
+    """Clasifica estados HTTP locales sin exponer el cuerpo de respuesta."""
+
+    if status == 404:
+        return (
+            "ollama_model_not_found",
+            "Ollama local no encontró el modelo solicitado.",
+        )
+    if status == 503:
+        return (
+            "ollama_overloaded",
+            "Ollama local está ocupado o sin recursos disponibles.",
+        )
+    if status >= 500:
+        return (
+            "ollama_internal_error",
+            "Ollama local informó un error interno.",
+        )
+    return (
+        f"ollama_http_{status}",
+        "Ollama local rechazó la solicitud.",
+    )
+
+
 class LocalOnlyJSONTransport:
     """Transporte JSON directo para loopback, sin soporte de redirecciones."""
 
@@ -164,10 +188,20 @@ class LocalOnlyJSONTransport:
             response = connection.getresponse()
             status = response.status
             raw = response.read(2_000_001)
-        except (HTTPException, TimeoutError, OSError) as exc:
+        except TimeoutError as exc:
+            raise ExternalProviderError(
+                "Ollama local no respondió dentro del tiempo permitido.",
+                error_code="ollama_timeout",
+            ) from exc
+        except ConnectionRefusedError as exc:
+            raise ExternalProviderError(
+                "Ollama local no está disponible en el puerto 11434.",
+                error_code="ollama_unavailable",
+            ) from exc
+        except (HTTPException, OSError) as exc:
             raise ExternalProviderError(
                 "No fue posible comunicarse con Ollama local.",
-                error_code="network_error",
+                error_code="ollama_network_error",
             ) from exc
         finally:
             connection.close()
@@ -182,9 +216,10 @@ class LocalOnlyJSONTransport:
                 error_code="redirect_blocked",
             )
         if not 200 <= status < 300:
+            error_code, message = _ollama_http_error(status)
             raise ExternalProviderError(
-                "Ollama local rechazó la solicitud.",
-                error_code=f"http_{status}",
+                message,
+                error_code=error_code,
             )
         if len(raw) > 2_000_000:
             raise ExternalProviderError(
@@ -567,7 +602,7 @@ class OllamaLocalProvider:
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "IUS-Razon/0.7.1",
+                "User-Agent": "IUS-Razon/0.7.2",
             },
             payload=payload,
             timeout_seconds=min(
@@ -575,6 +610,12 @@ class OllamaLocalProvider:
                 self._settings.timeout_seconds,
             ),
         )
+        done = response_payload.get("done")
+        if done is not True:
+            raise ExternalProviderError(
+                "Ollama local devolvió una respuesta incompleta.",
+                error_code="ollama_incomplete_response",
+            )
         message = response_payload.get("message")
         message_mapping = (
             cast(dict[str, object], message)
@@ -641,6 +682,10 @@ class OllamaLocalProvider:
                 "citations": "Usa solo códigos autorizados entre corchetes.",
                 "human_review": "Obligatoria.",
                 "no_new_facts": True,
+                "context_absence": (
+                    "Toda ausencia de información debe comenzar con "
+                    "'Control de contexto:'."
+                ),
             },
         }
         return json.dumps(

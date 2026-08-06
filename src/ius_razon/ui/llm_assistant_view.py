@@ -75,6 +75,10 @@ def render_llm_assistant(
             f"Endpoint: {summary.get('endpoint', '')} · "
             "Costo por solicitud: USD 0"
         )
+        _render_ollama_diagnostics(
+            case_id,
+            assistant_service=assistant_service,
+        )
     else:
         summary = assistant_service.integration_test_safe_summary
         st.info(
@@ -427,6 +431,69 @@ def render_llm_assistant(
         issue_id=issue_id,
         assistant_service=assistant_service,
     )
+
+
+def _render_ollama_diagnostics(
+    case_id: str,
+    *,
+    assistant_service: LLMAssistantService,
+) -> None:
+    """Muestra disponibilidad, versión y modelo sin enviar datos jurídicos."""
+
+    state_key = f"ollama_health_summary_{case_id}"
+    refresh = st.button(
+        "Actualizar diagnóstico de Ollama",
+        key=f"ollama_health_refresh_{case_id}",
+    )
+    if refresh or state_key not in st.session_state:
+        report = assistant_service.check_ollama_health()
+        st.session_state[state_key] = report.safe_summary()
+
+    raw_summary = st.session_state.get(state_key, {})
+    summary = (
+        cast(dict[str, object], raw_summary)
+        if isinstance(raw_summary, dict)
+        else {}
+    )
+    ready = bool(summary.get("ready", False))
+    message = str(summary.get("message", "Diagnóstico no disponible."))
+    if ready:
+        st.success(message)
+    else:
+        st.warning(
+            message
+            + " Si se genera un borrador, se conservará el fallback local controlado."
+        )
+
+    metrics = st.columns(4)
+    metrics[0].metric(
+        "Servicio",
+        "Disponible"
+        if bool(summary.get("service_available", False))
+        else "No disponible",
+    )
+    metrics[1].metric(
+        "Modelo",
+        "Instalado"
+        if bool(summary.get("model_installed", False))
+        else "No verificado",
+    )
+    metrics[2].metric(
+        "Versión",
+        str(summary.get("version") or "No disponible"),
+    )
+    installed_model_count = summary.get("installed_model_count", 0)
+    metrics[3].metric(
+        "Modelos locales",
+        (
+            installed_model_count
+            if isinstance(installed_model_count, int)
+            else 0
+        ),
+    )
+    error_code = summary.get("error_code")
+    if error_code:
+        st.caption(f"Diagnóstico seguro: {error_code}")
 
 
 def _render_current_draft(

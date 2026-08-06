@@ -54,6 +54,20 @@ _NON_CLAIM_PREFIXES = (
 )
 
 
+_CONTEXT_ABSENCE_PATTERNS = (
+    re.compile(
+        r"^no se proporcion(?:ó|aron) "
+        r"(?:una |ninguna )?conclusi(?:ón|ones) de inferencia\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^no se incluy(?:ó|eron) "
+        r"(?:una |ninguna )?conclusi(?:ón|ones) de inferencia\b",
+        re.IGNORECASE,
+    ),
+)
+
+
 def sanitize_text(value: str) -> str:
     """Normaliza texto externo sin ejecutar ni interpretar su contenido."""
 
@@ -65,6 +79,35 @@ def sanitize_text(value: str) -> str:
         for character in normalized
     )
     return re.sub(r"[ \t]+", " ", cleaned).strip()
+
+
+def normalize_context_control_statements(value: str) -> str:
+    """Marca ausencias operativas para que no se traten como hechos jurídicos."""
+
+    normalized_lines: list[str] = []
+    for raw_line in sanitize_text(value).splitlines():
+        stripped = raw_line.strip()
+        bullet = ""
+        content = stripped
+        if stripped.startswith(("- ", "* ")):
+            bullet = stripped[:2]
+            content = stripped[2:].strip()
+        lowered = content.casefold()
+        should_mark = (
+            bool(content)
+            and not extract_reference_codes(content)
+            and any(
+                pattern.match(lowered)
+                for pattern in _CONTEXT_ABSENCE_PATTERNS
+            )
+        )
+        if should_mark:
+            first = content[0].lower()
+            marked = f"Control de contexto: {first}{content[1:]}"
+            normalized_lines.append(f"{bullet}{marked}" if bullet else marked)
+        else:
+            normalized_lines.append(raw_line)
+    return "\n".join(normalized_lines).strip()
 
 
 def detect_prompt_injection(items: Iterable[ContextItem]) -> list[str]:
