@@ -11,6 +11,7 @@ from typing import Any
 LOGGER = logging.getLogger(__name__)
 
 _PERSISTENCE_FILE = ".ius_razon_persistence.json"
+_DEFAULT_DEMO_DB = "data/ius_razon_demo.db"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,10 +39,17 @@ class AppConfig:
 
         root = (project_root or Path.cwd()).resolve()
         state_path = root / _PERSISTENCE_FILE
-        saved = cls._load_saved_persistence(state_path)
+        demo_mode = cls._parse_boolean(
+            os.getenv("IUS_RAZON_DEMO_MODE", "false"),
+            variable_name="IUS_RAZON_DEMO_MODE",
+        )
+        saved = {} if demo_mode else cls._load_saved_persistence(state_path)
 
         raw_db_path = os.getenv("IUS_RAZON_DB_PATH")
-        if raw_db_path:
+        if demo_mode:
+            demo_db_path = os.getenv("IUS_RAZON_DEMO_DB_PATH", _DEFAULT_DEMO_DB)
+            db_path = cls._resolve_path(root, demo_db_path)
+        elif raw_db_path:
             db_path = cls._resolve_path(root, raw_db_path)
         elif isinstance(saved.get("db_path"), str):
             db_path = cls._resolve_path(root, str(saved["db_path"]))
@@ -49,7 +57,9 @@ class AppConfig:
             db_path = cls._discover_existing_db(root) or (root / "data" / "ius_razon.db")
 
         raw_data_dir = os.getenv("IUS_RAZON_DATA_DIR")
-        if raw_data_dir:
+        if demo_mode:
+            data_dir = db_path.parent
+        elif raw_data_dir:
             data_dir = cls._resolve_path(root, raw_data_dir)
         elif raw_db_path:
             data_dir = db_path.parent
@@ -71,13 +81,16 @@ class AppConfig:
         for directory in (data_dir, upload_dir, log_dir, db_path.parent):
             directory.mkdir(parents=True, exist_ok=True)
 
-        cls._save_persistence(
-            state_path,
-            {
-                "db_path": str(db_path.resolve()),
-                "data_dir": str(data_dir.resolve()),
-            },
-        )
+        if demo_mode:
+            cls._ensure_demo_database(db_path)
+        else:
+            cls._save_persistence(
+                state_path,
+                {
+                    "db_path": str(db_path.resolve()),
+                    "data_dir": str(data_dir.resolve()),
+                },
+            )
 
         return cls(
             project_root=root,
@@ -93,6 +106,17 @@ class AppConfig:
     def _resolve_path(root: Path, raw_path: str) -> Path:
         candidate = Path(raw_path).expanduser()
         return candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+
+    @staticmethod
+    def _parse_boolean(raw_value: str, variable_name: str) -> bool:
+        normalized = raw_value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(
+            f"{variable_name} debe usar true/false, 1/0, yes/no u on/off."
+        )
 
     @staticmethod
     def _parse_positive_int(raw_value: str, variable_name: str) -> int:
@@ -125,6 +149,17 @@ class AppConfig:
             LOGGER.warning("No fue posible persistir la ubicación de datos: %s", exc)
 
     @classmethod
+    def _ensure_demo_database(cls, db_path: Path) -> None:
+        """Crea o repara la base pública sintética sin tocar la persistencia local."""
+
+        if cls._case_count(db_path) > 0:
+            return
+
+        from ius_razon.demo_database import build_demo_database
+
+        build_demo_database(db_path, force=db_path.exists())
+
+    @classmethod
     def _discover_existing_db(cls, root: Path) -> Path | None:
         """Localiza una base previa dentro del proyecto sin modificarla."""
 
@@ -154,10 +189,13 @@ class AppConfig:
         """Devuelve el número de expedientes; una base inválida puntúa cero."""
 
         try:
-            with sqlite3.connect(db_path) as connection:
+            connection = sqlite3.connect(db_path)
+            try:
                 row = connection.execute(
                     "SELECT COUNT(*) FROM cases"
                 ).fetchone()
+            finally:
+                connection.close()
         except sqlite3.Error:
             return 0
         return int(row[0]) if row else 0
