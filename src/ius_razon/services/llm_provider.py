@@ -5,8 +5,10 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping
+from http.client import HTTPConnection, HTTPException
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from ius_razon.domain.llm_models import (
@@ -17,6 +19,7 @@ from ius_razon.domain.llm_models import (
     ProviderResponse,
 )
 from ius_razon.security.llm_external_config import ExternalProviderSettings
+from ius_razon.security.llm_ollama_config import OllamaProviderSettings
 from ius_razon.security.llm_openai_config import OpenAIProviderSettings
 
 
@@ -115,6 +118,89 @@ class UrllibJSONTransport:
         if not isinstance(parsed, dict):
             raise ExternalProviderError(
                 "La respuesta externa debe ser un objeto JSON.",
+                error_code="invalid_schema",
+            )
+        return {str(key): value for key, value in parsed.items()}
+
+
+class LocalOnlyJSONTransport:
+    """Transporte JSON directo para loopback, sin soporte de redirecciones."""
+
+    def post_json(
+        self,
+        endpoint: str,
+        *,
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        parsed_endpoint = urlparse(endpoint)
+        host = parsed_endpoint.hostname
+        port = parsed_endpoint.port
+        if host is None or port is None:
+            raise ExternalProviderError(
+                "El endpoint local de Ollama es inválido.",
+                error_code="invalid_local_endpoint",
+            )
+        encoded = json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        connection = HTTPConnection(
+            host=host,
+            port=port,
+            timeout=timeout_seconds,
+        )
+        status: int | None = None
+        raw = b""
+        try:
+            connection.request(
+                "POST",
+                parsed_endpoint.path,
+                body=encoded,
+                headers=dict(headers),
+            )
+            response = connection.getresponse()
+            status = response.status
+            raw = response.read(2_000_001)
+        except (HTTPException, TimeoutError, OSError) as exc:
+            raise ExternalProviderError(
+                "No fue posible comunicarse con Ollama local.",
+                error_code="network_error",
+            ) from exc
+        finally:
+            connection.close()
+        if status is None:
+            raise ExternalProviderError(
+                "Ollama local no devolvió un estado HTTP.",
+                error_code="missing_http_status",
+            )
+        if 300 <= status < 400:
+            raise ExternalProviderError(
+                "Ollama local intentó redirigir la solicitud.",
+                error_code="redirect_blocked",
+            )
+        if not 200 <= status < 300:
+            raise ExternalProviderError(
+                "Ollama local rechazó la solicitud.",
+                error_code=f"http_{status}",
+            )
+        if len(raw) > 2_000_000:
+            raise ExternalProviderError(
+                "La respuesta local excedió el límite permitido.",
+                error_code="response_too_large",
+            )
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ExternalProviderError(
+                "Ollama local devolvió JSON inválido.",
+                error_code="invalid_json",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ExternalProviderError(
+                "La respuesta de Ollama debe ser un objeto JSON.",
                 error_code="invalid_schema",
             )
         return {str(key): value for key, value in parsed.items()}
@@ -417,6 +503,150 @@ class OpenAIResponsesProvider:
         raise ExternalProviderError(
             "OpenAI no devolvió texto utilizable.",
             error_code="missing_output_text",
+        )
+
+
+
+class OllamaLocalProvider:
+    """Proveedor generativo local restringido a Ollama en loopback."""
+
+    def __init__(
+        self,
+        settings: OllamaProviderSettings,
+        *,
+        transport: JSONTransport | None = None,
+    ) -> None:
+        settings.validate()
+        if not settings.configured:
+            raise ValueError("Ollama local no está habilitado.")
+        self._settings = settings
+        self._transport = transport or LocalOnlyJSONTransport()
+
+    @property
+    def provider_name(self) -> str:
+        return "Ollama local gratuito"
+
+    @property
+    def model_name(self) -> str:
+        return self._settings.model
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        """Genera localmente sin claves, costo ni conexiones remotas."""
+
+        if request.max_retries != 0:
+            raise ExternalProviderError(
+                "Ollama local exige cero reintentos en esta integración.",
+                error_code="retries_not_allowed",
+            )
+        max_output_tokens = min(
+            request.max_output_tokens,
+            self._settings.max_output_tokens,
+        )
+        payload: dict[str, object] = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": request.system_instruction,
+                },
+                {
+                    "role": "user",
+                    "content": self._build_input(request),
+                },
+            ],
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": self._settings.temperature,
+                "num_predict": max_output_tokens,
+                "num_ctx": self._settings.context_window,
+            },
+        }
+        response_payload = self._transport.post_json(
+            self._settings.endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "IUS-Razon/0.7.1",
+            },
+            payload=payload,
+            timeout_seconds=min(
+                request.timeout_seconds,
+                self._settings.timeout_seconds,
+            ),
+        )
+        message = response_payload.get("message")
+        message_mapping = (
+            cast(dict[str, object], message)
+            if isinstance(message, dict)
+            else {}
+        )
+        content = message_mapping.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ExternalProviderError(
+                "Ollama local no devolvió texto utilizable.",
+                error_code="missing_output_text",
+            )
+        text = content.strip()
+        if len(text) > request.max_output_chars:
+            text = text[: request.max_output_chars].rstrip()
+
+        input_tokens = ExternalHTTPProvider._optional_nonnegative_int(
+            response_payload.get("prompt_eval_count")
+        )
+        output_tokens = ExternalHTTPProvider._optional_nonnegative_int(
+            response_payload.get("eval_count")
+        )
+        created_at = response_payload.get("created_at")
+        request_id = (
+            hashlib.sha256(
+                (
+                    f"{self.model_name}|{created_at}|"
+                    f"{input_tokens}|{output_tokens}|{text}"
+                ).encode()
+            ).hexdigest()[:32]
+            if created_at is not None
+            else None
+        )
+        return ProviderResponse(
+            text=text,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            request_id=request_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=0.0,
+            external_call=False,
+        )
+
+    @staticmethod
+    def _build_input(request: ProviderRequest) -> str:
+        context = [
+            {
+                "code": item.code,
+                "category": item.category.value,
+                "title": item.title,
+                "content": item.content,
+            }
+            for item in request.context_items
+        ]
+        payload = {
+            "task": request.task.value,
+            "user_instruction": request.instructions,
+            "allowed_codes": list(request.allowed_codes),
+            "context": context,
+            "output_requirements": {
+                "language": "es",
+                "format": "markdown",
+                "citations": "Usa solo códigos autorizados entre corchetes.",
+                "human_review": "Obligatoria.",
+                "no_new_facts": True,
+            },
+        }
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
 

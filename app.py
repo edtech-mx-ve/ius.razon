@@ -61,14 +61,10 @@ from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
-from ius_razon.security.llm_external_config import (
-    ExternalProviderConfigurationError,
-    ExternalProviderSettings,
-)
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
-from ius_razon.security.llm_openai_config import (
-    OpenAIProviderConfigurationError,
-    OpenAIProviderSettings,
+from ius_razon.security.llm_ollama_config import (
+    OllamaProviderConfigurationError,
+    OllamaProviderSettings,
 )
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
@@ -77,8 +73,7 @@ from ius_razon.services.llm_assistant_service import LLMAssistantService
 from ius_razon.services.llm_provider import (
     ControlledExternalTestProvider,
     DeterministicMockProvider,
-    ExternalHTTPProvider,
-    OpenAIResponsesProvider,
+    OllamaLocalProvider,
 )
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
@@ -133,29 +128,16 @@ def build_services() -> tuple[
         reasoning_service=reasoning,
         argumentation_service=argumentation,
     )
-    external_error: str | None = None
+    ollama_error: str | None = None
     try:
-        external_settings = ExternalProviderSettings.from_env()
-    except ExternalProviderConfigurationError as exc:
-        external_error = str(exc)
-        external_settings = ExternalProviderSettings()
+        ollama_settings = OllamaProviderSettings.from_env()
+    except OllamaProviderConfigurationError as exc:
+        ollama_error = str(exc)
+        ollama_settings = OllamaProviderSettings(enabled=False)
 
-    external_provider = (
-        ExternalHTTPProvider(external_settings)
-        if external_settings.configured
-        else None
-    )
-
-    openai_error: str | None = None
-    try:
-        openai_settings = OpenAIProviderSettings.from_env()
-    except OpenAIProviderConfigurationError as exc:
-        openai_error = str(exc)
-        openai_settings = OpenAIProviderSettings()
-
-    openai_provider = (
-        OpenAIResponsesProvider(openai_settings)
-        if openai_settings.configured
+    ollama_provider = (
+        OllamaLocalProvider(ollama_settings)
+        if ollama_settings.configured
         else None
     )
     llm_assistant = LLMAssistantService(
@@ -163,14 +145,11 @@ def build_services() -> tuple[
         reasoning_service=reasoning,
         argumentation_service=argumentation,
         provider=DeterministicMockProvider(),
-        external_provider=external_provider,
-        external_settings=external_settings,
-        external_configuration_error=external_error,
         integration_test_provider=ControlledExternalTestProvider(),
         integration_test_policy=ControlledExternalTestPolicy(),
-        openai_provider=openai_provider,
-        openai_settings=openai_settings,
-        openai_configuration_error=openai_error,
+        ollama_provider=ollama_provider,
+        ollama_settings=ollama_settings,
+        ollama_configuration_error=ollama_error,
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )

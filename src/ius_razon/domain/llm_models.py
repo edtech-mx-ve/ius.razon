@@ -42,6 +42,7 @@ class ProviderMode(StrEnum):
     """Modo de ejecución del proveedor."""
 
     SIMULATED = "Simulado local"
+    OLLAMA = "Ollama local gratuito"
     EXTERNAL_TEST = "Prueba externa controlada"
     OPENAI = "OpenAI Responses API"
     EXTERNAL = "Proveedor externo"
@@ -131,11 +132,12 @@ class AssistantRequest(AssistantModel):
                 ProviderMode.EXTERNAL,
                 ProviderMode.EXTERNAL_TEST,
                 ProviderMode.OPENAI,
+                ProviderMode.OLLAMA,
             }
             and not self.anonymize_parties
         ):
             raise ValueError(
-                "Los modos externos y de prueba controlada requieren anonimización de partes."
+                "Los proveedores controlados requieren anonimización de partes."
             )
         return self
 

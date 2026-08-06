@@ -32,25 +32,17 @@ def render_llm_assistant(
         "Toda salida requiere revisión humana antes de aprobarse."
     )
 
-    if assistant_service.external_configuration_error:
+    if assistant_service.ollama_configuration_error:
         st.error(
-            "Configuración externa inválida: "
-            + assistant_service.external_configuration_error
-        )
-
-    if assistant_service.openai_configuration_error:
-        st.error(
-            "Configuración de OpenAI inválida: "
-            + assistant_service.openai_configuration_error
+            "Configuración local de Ollama inválida: "
+            + assistant_service.ollama_configuration_error
         )
 
     provider_options = [ProviderMode.SIMULATED]
+    if assistant_service.ollama_available:
+        provider_options.append(ProviderMode.OLLAMA)
     if assistant_service.integration_test_available:
         provider_options.append(ProviderMode.EXTERNAL_TEST)
-    if assistant_service.openai_available:
-        provider_options.append(ProviderMode.OPENAI)
-    if assistant_service.external_available:
-        provider_options.append(ProviderMode.EXTERNAL)
 
     provider_value = st.selectbox(
         "Proveedor",
@@ -58,11 +50,10 @@ def render_llm_assistant(
         key=f"llm_provider_{case_id}",
     )
     provider_mode = ProviderMode(provider_value)
-    controlled_mode = provider_mode in {
-        ProviderMode.EXTERNAL_TEST,
-        ProviderMode.OPENAI,
-        ProviderMode.EXTERNAL,
-    }
+    controlled_mode = provider_mode is ProviderMode.EXTERNAL_TEST
+    local_llm_mode = provider_mode is ProviderMode.OLLAMA
+    anonymization_required = controlled_mode or local_llm_mode
+    preview_required = controlled_mode or local_llm_mode
 
     if provider_mode is ProviderMode.SIMULATED:
         st.info(
@@ -72,7 +63,19 @@ def render_llm_assistant(
             f"Proveedor: {assistant_service.provider_name} · "
             f"Modelo: {assistant_service.model_name}"
         )
-    elif provider_mode is ProviderMode.EXTERNAL_TEST:
+    elif provider_mode is ProviderMode.OLLAMA:
+        summary = assistant_service.ollama_safe_summary
+        st.success(
+            "Ollama local gratuito: el modelo se ejecuta en este equipo, "
+            "sin clave API y sin enviar el expediente a Internet."
+        )
+        st.caption(
+            f"Proveedor: {summary.get('provider_name', '')} · "
+            f"Modelo: {summary.get('model', '')} · "
+            f"Endpoint: {summary.get('endpoint', '')} · "
+            "Costo por solicitud: USD 0"
+        )
+    else:
         summary = assistant_service.integration_test_safe_summary
         st.info(
             "Prueba externa controlada: ejercita consentimiento, límites y auditoría "
@@ -83,39 +86,11 @@ def render_llm_assistant(
             f"Modelo: {summary.get('model', '')} · "
             "Red: desactivada"
         )
-    elif provider_mode is ProviderMode.OPENAI:
-        summary = assistant_service.openai_safe_summary
-        st.warning(
-            "OpenAI real: se enviará únicamente el contexto anonimizado y "
-            "seleccionado después de cuatro confirmaciones."
-        )
-        st.caption(
-            f"Proveedor: OpenAI Responses API · "
-            f"Modelo: {summary.get('model', '')} · "
-            f"Host: {summary.get('endpoint_host', '')} · "
-            "Almacenamiento solicitado: desactivado"
-        )
-    else:
-        summary = assistant_service.external_safe_summary
-        st.warning(
-            "Modo externo real: el contexto anonimizado seleccionado será enviado "
-            "fuera del equipo únicamente después de tres confirmaciones."
-        )
-        st.caption(
-            f"Modelo: {summary.get('model', '')} · "
-            f"Host: {summary.get('endpoint_host', '')} · "
-            "Clave configurada: sí"
-        )
 
-    if not assistant_service.openai_available:
+    if not assistant_service.ollama_available:
         st.caption(
-            "OpenAI está desactivado. Configúralo únicamente después de validar "
-            "el adaptador y las tarifas."
-        )
-    if not assistant_service.external_available:
-        st.caption(
-            "El proveedor externo genérico está desactivado. "
-            "Los modos locales siguen disponibles."
+            "Ollama local está desactivado por configuración. "
+            "El modo simulado continúa disponible."
         )
 
     issues = case_service.list_legal_issues(case_id)
@@ -228,8 +203,8 @@ def render_llm_assistant(
     anonymize = controls[0].checkbox(
         "Anonimizar partes",
         value=True,
-        disabled=controlled_mode,
-        help="Los modos controlados y externos exigen anonimización.",
+        disabled=anonymization_required,
+        help="Ollama local y la prueba controlada exigen anonimización.",
         key=f"llm_anonymize_{case_id}_{issue_id}_{provider_mode.value}",
     )
     max_context = controls[1].number_input(
@@ -261,7 +236,26 @@ def render_llm_assistant(
     acknowledge_risks = False
     confirm_single_call = False
 
-    if provider_mode is ProviderMode.EXTERNAL_TEST:
+    if provider_mode is ProviderMode.OLLAMA:
+        profile = assistant_service.ollama_safe_summary
+        max_input_tokens = cast(int, profile.get("max_input_tokens", 3072))
+        max_output_tokens = cast(int, profile.get("max_output_tokens", 512))
+        max_cost_usd = 0.0
+        timeout_seconds = cast(int, profile.get("timeout_seconds", 120))
+        max_retries = 0
+        allow_fallback = True
+        st.markdown("### Perfil local gratuito")
+        profile_metrics = st.columns(5)
+        profile_metrics[0].metric("Entrada", f"{max_input_tokens} tokens")
+        profile_metrics[1].metric("Salida", f"{max_output_tokens} tokens")
+        profile_metrics[2].metric("Costo", "USD 0")
+        profile_metrics[3].metric("Tiempo", f"{timeout_seconds} s")
+        profile_metrics[4].metric("Reintentos", max_retries)
+        st.caption(
+            "Solo loopback local · think=false · sin clave API · "
+            "fallback simulado disponible"
+        )
+    elif provider_mode is ProviderMode.EXTERNAL_TEST:
         profile = assistant_service.integration_test_safe_summary
         max_input_tokens = cast(int, profile.get("max_input_tokens", 2048))
         max_output_tokens = cast(int, profile.get("max_output_tokens", 256))
@@ -279,79 +273,6 @@ def render_llm_assistant(
         st.caption(
             "Fallback local obligatorio · una sola invocación · sin red · sin clave API"
         )
-    elif provider_mode is ProviderMode.OPENAI:
-        profile = assistant_service.openai_safe_summary
-        max_input_tokens = cast(int, profile.get("max_input_tokens", 2048))
-        max_output_tokens = cast(int, profile.get("max_output_tokens", 256))
-        max_cost_usd = cast(float, profile.get("max_cost_usd", 0.02))
-        timeout_seconds = cast(int, profile.get("timeout_seconds", 20))
-        max_retries = 0
-        allow_fallback = True
-        st.markdown("### Perfil fijo de primera llamada OpenAI")
-        profile_metrics = st.columns(5)
-        profile_metrics[0].metric("Entrada", f"{max_input_tokens} tokens")
-        profile_metrics[1].metric("Salida", f"{max_output_tokens} tokens")
-        profile_metrics[2].metric("Costo máximo", f"USD {max_cost_usd:.4f}")
-        profile_metrics[3].metric("Tiempo", f"{timeout_seconds} s")
-        profile_metrics[4].metric("Reintentos", max_retries)
-        st.caption(
-            "Fallback local obligatorio · una sola llamada · store=false · "
-            "sin herramientas externas"
-        )
-    elif provider_mode is ProviderMode.EXTERNAL:
-        limits = st.columns(3)
-        max_input_tokens = int(
-            limits[0].number_input(
-                "Máximo de tokens de entrada",
-                min_value=256,
-                max_value=200000,
-                value=16000,
-                step=256,
-            )
-        )
-        max_output_tokens = int(
-            limits[1].number_input(
-                "Máximo de tokens de salida",
-                min_value=64,
-                max_value=32000,
-                value=2000,
-                step=64,
-            )
-        )
-        max_cost_usd = float(
-            limits[2].number_input(
-                "Presupuesto máximo USD",
-                min_value=0.0,
-                max_value=100.0,
-                value=0.10,
-                step=0.01,
-                format="%.4f",
-            )
-        )
-        execution = st.columns(3)
-        timeout_seconds = int(
-            execution[0].number_input(
-                "Tiempo máximo en segundos",
-                min_value=5,
-                max_value=180,
-                value=30,
-                step=5,
-            )
-        )
-        max_retries = int(
-            execution[1].number_input(
-                "Reintentos máximos",
-                min_value=0,
-                max_value=3,
-                value=1,
-                step=1,
-            )
-        )
-        allow_fallback = execution[2].checkbox(
-            "Fallback al modo local",
-            value=True,
-        )
-
     consent = (
         ExternalConsent(
             reviewed_context=reviewed_context,
@@ -370,7 +291,7 @@ def render_llm_assistant(
         instructions=instructions or None,
         selected_categories=selected_categories,
         selected_codes=selected_codes,
-        anonymize_parties=True if controlled_mode else anonymize,
+        anonymize_parties=True if anonymization_required else anonymize,
         max_context_chars=int(max_context),
         max_output_chars=int(max_output_chars),
         provider_mode=provider_mode,
@@ -391,13 +312,11 @@ def render_llm_assistant(
         st.error(f"No fue posible generar la vista previa: {exc}")
         return
 
-    if controlled_mode:
-        if provider_mode is ProviderMode.EXTERNAL_TEST:
-            title = "### Vista previa de la prueba controlada"
-        elif provider_mode is ProviderMode.OPENAI:
-            title = "### Vista previa de la única llamada OpenAI"
+    if preview_required:
+        if provider_mode is ProviderMode.OLLAMA:
+            title = "### Vista previa de la generación local"
         else:
-            title = "### Vista previa del envío externo"
+            title = "### Vista previa de la prueba controlada"
         st.markdown(title)
         metrics = st.columns(4)
         metrics[0].metric("Elementos", len(preview.items))
@@ -407,8 +326,10 @@ def render_llm_assistant(
             preview.estimated_input_tokens,
         )
         metrics[3].metric(
-            "Costo máximo estimado",
-            f"USD {preview.estimated_max_cost_usd:.6f}",
+            "Costo estimado",
+            "USD 0" if provider_mode is ProviderMode.OLLAMA else (
+                f"USD {preview.estimated_max_cost_usd:.6f}"
+            ),
         )
         st.caption(
             "Códigos autorizados: "
@@ -425,43 +346,33 @@ def render_llm_assistant(
                 value=False,
             )
 
-        reviewed_context = st.checkbox(
-            "Confirmo que revisé el contexto y los códigos seleccionados",
-            value=False,
-        )
-        authorized_external = st.checkbox(
-            (
-                "Autorizo esta prueba específica sin red"
-                if provider_mode is ProviderMode.EXTERNAL_TEST
-                else (
-                    "Autorizo una única llamada real a OpenAI"
-                    if provider_mode is ProviderMode.OPENAI
-                    else "Autorizo esta llamada externa específica"
-                )
-            ),
-            value=False,
-        )
-        accepted_cost = st.checkbox(
-            "Acepto el límite de costo mostrado",
-            value=False,
-        )
-        if provider_mode in {
-            ProviderMode.EXTERNAL_TEST,
-            ProviderMode.OPENAI,
-        }:
-            confirm_single_call = st.checkbox(
-                (
-                    "Confirmo una sola invocación de prueba y cero reintentos"
-                    if provider_mode is ProviderMode.EXTERNAL_TEST
-                    else "Confirmo una sola llamada real a OpenAI y cero reintentos"
-                ),
+        if provider_mode is ProviderMode.EXTERNAL_TEST:
+            reviewed_context = st.checkbox(
+                "Confirmo que revisé el contexto y los códigos seleccionados",
                 value=False,
             )
-        consent = ExternalConsent(
-            reviewed_context=reviewed_context,
-            authorized_external_call=authorized_external,
-            accepted_cost_limit=accepted_cost,
-        )
+            authorized_external = st.checkbox(
+                "Autorizo esta prueba específica sin red",
+                value=False,
+            )
+            accepted_cost = st.checkbox(
+                "Acepto el límite de costo mostrado",
+                value=False,
+            )
+            confirm_single_call = st.checkbox(
+                "Confirmo una sola invocación de prueba y cero reintentos",
+                value=False,
+            )
+            consent = ExternalConsent(
+                reviewed_context=reviewed_context,
+                authorized_external_call=authorized_external,
+                accepted_cost_limit=accepted_cost,
+            )
+        else:
+            st.caption(
+                "La generación usa únicamente el servicio local de Ollama. "
+                "No se solicita consentimiento de envío externo porque no hay salida del equipo."
+            )
 
     request = preview_request.model_copy(
         update={
@@ -471,10 +382,10 @@ def render_llm_assistant(
         }
     )
 
-    if provider_mode is ProviderMode.EXTERNAL_TEST:
+    if provider_mode is ProviderMode.OLLAMA:
+        button_label = "Generar con Ollama local"
+    elif provider_mode is ProviderMode.EXTERNAL_TEST:
         button_label = "Ejecutar prueba externa controlada"
-    elif provider_mode is ProviderMode.OPENAI:
-        button_label = "Ejecutar única llamada OpenAI"
     else:
         button_label = "Generar borrador controlado"
     submitted = st.button(

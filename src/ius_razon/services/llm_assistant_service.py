@@ -37,6 +37,7 @@ from ius_razon.security.llm_guardrails import (
     text_hash,
     truncate_context_items,
 )
+from ius_razon.security.llm_ollama_config import OllamaProviderSettings
 from ius_razon.security.llm_openai_config import OpenAIProviderSettings
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
@@ -77,6 +78,9 @@ class LLMAssistantService:
         openai_provider: LLMProvider | None = None,
         openai_settings: OpenAIProviderSettings | None = None,
         openai_configuration_error: str | None = None,
+        ollama_provider: LLMProvider | None = None,
+        ollama_settings: OllamaProviderSettings | None = None,
+        ollama_configuration_error: str | None = None,
     ) -> None:
         self._case_service = case_service
         self._reasoning_service = reasoning_service
@@ -90,6 +94,9 @@ class LLMAssistantService:
         self._openai_provider = openai_provider
         self._openai_settings = openai_settings
         self._openai_configuration_error = openai_configuration_error
+        self._ollama_provider = ollama_provider
+        self._ollama_settings = ollama_settings
+        self._ollama_configuration_error = ollama_configuration_error
         self._repository = repository
         self._backup_dir = backup_dir
 
@@ -184,6 +191,35 @@ class LLMAssistantService:
                 "pricing_configured": False,
             }
         return self._openai_settings.safe_summary()
+
+    @property
+    def ollama_available(self) -> bool:
+        """Indica si Ollama local está habilitado y configurado."""
+
+        return bool(
+            self._ollama_provider is not None
+            and self._ollama_settings is not None
+            and self._ollama_settings.configured
+        )
+
+    @property
+    def ollama_configuration_error(self) -> str | None:
+        """Error seguro de configuración de Ollama local."""
+
+        return self._ollama_configuration_error
+
+    @property
+    def ollama_safe_summary(self) -> dict[str, object]:
+        """Estado visible de Ollama sin claves ni contenido."""
+
+        if self._ollama_settings is None:
+            return {
+                "enabled": False,
+                "configured": False,
+                "api_key_required": False,
+                "cost_per_request_usd": 0.0,
+            }
+        return self._ollama_settings.safe_summary()
 
     def list_context_items(
         self,
@@ -338,7 +374,17 @@ class LLMAssistantService:
         )
 
         provider = self._provider
-        if request.provider_mode is ProviderMode.EXTERNAL:
+        if request.provider_mode is ProviderMode.OLLAMA:
+            self._validate_ollama_preflight(request, preview)
+            if self._ollama_provider is None:
+                self._audit_blocked(
+                    request,
+                    preview,
+                    error_code="ollama_not_configured",
+                )
+                raise ValueError("Ollama local no está configurado.")
+            provider = self._ollama_provider
+        elif request.provider_mode is ProviderMode.EXTERNAL:
             self._validate_external_preflight(request, preview)
             if self._external_provider is None:
                 self._audit_blocked(
@@ -380,6 +426,7 @@ class LLMAssistantService:
                     ProviderMode.EXTERNAL,
                     ProviderMode.EXTERNAL_TEST,
                     ProviderMode.OPENAI,
+                    ProviderMode.OLLAMA,
                 }
                 and request.allow_fallback
             ):
@@ -468,6 +515,64 @@ class LLMAssistantService:
             record.output_hash,
         )
         return record
+
+    def _validate_ollama_preflight(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+    ) -> None:
+        """Aplica límites locales y evita conexiones remotas o reintentos."""
+
+        settings = self._ollama_settings
+        if settings is None or not settings.configured:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="ollama_not_configured",
+            )
+            raise ValueError("Ollama local no está configurado.")
+        if not request.anonymize_parties:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="anonymization_required",
+            )
+            raise ValueError("Ollama local requiere anonimización de partes.")
+        if preview.risk_flags and not request.acknowledge_risk_flags:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="risk_flags_not_acknowledged",
+            )
+            raise ValueError(
+                "Revisa las señales de instrucciones incrustadas antes de generar."
+            )
+        if request.max_retries != 0:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="retries_not_allowed",
+            )
+            raise ValueError("Ollama local exige cero reintentos.")
+        input_limit = min(request.max_input_tokens, settings.max_input_tokens)
+        if preview.estimated_input_tokens > input_limit:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="input_token_limit",
+            )
+            raise ValueError(
+                "El contexto supera el límite local de tokens de entrada."
+            )
+        if request.max_output_tokens > settings.max_output_tokens:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="output_token_limit",
+            )
+            raise ValueError(
+                "La salida supera el límite local configurado para Ollama."
+            )
 
     def _validate_external_preflight(
         self,
@@ -642,7 +747,14 @@ class LLMAssistantService:
         error_code: str,
     ) -> None:
         settings = self._external_settings
-        if request.provider_mode is ProviderMode.OPENAI:
+        if request.provider_mode is ProviderMode.OLLAMA:
+            provider_name = "Ollama local gratuito"
+            model_name = (
+                self._ollama_settings.model
+                if self._ollama_settings is not None
+                else "no-configurado"
+            )
+        elif request.provider_mode is ProviderMode.OPENAI:
             provider_name = "OpenAI Responses API"
             model_name = (
                 self._openai_settings.model

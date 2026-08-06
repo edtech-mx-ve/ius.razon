@@ -1,13 +1,13 @@
-# IUS-Razón — Sprint 4.4 (v0.6.0)
+# IUS-Razón — Sprint 4.5.1 (v0.7.1)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
 borradores asistivos bajo control humano.
 
-El motor determinista permanece en la versión 3.2.0. Sprint 4.4 conserva el
-proveedor simulado local e incorpora un proveedor HTTPS externo opcional,
-desactivado por defecto, con consentimiento explícito, límites de uso,
-anonimización obligatoria, fallback local y auditoría sin secretos.
+El motor determinista permanece en la versión 3.2.0. Sprint 4.5.1 incorpora
+Ollama como proveedor generativo local gratuito, restringido a loopback,
+sin clave API, sin costo por solicitud y sin enviar el expediente a Internet.
+El proveedor simulado y la prueba externa controlada permanecen disponibles.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
@@ -88,21 +88,22 @@ La pestaña `Asistente IA` permite:
 
 ## Seguridad y privacidad
 
-El modo externo está desactivado por defecto. La clave se lee únicamente desde
-`IUS_RAZON_LLM_API_KEY` y se envía en memoria mediante el encabezado
-`Authorization`; no se guarda en SQLite, Git, logs ni borradores.
+El modo activo con modelo generativo usa exclusivamente Ollama en
+`http://127.0.0.1:11434/api/chat`. La configuración rechaza hosts remotos,
+puertos distintos de `11434`, rutas diferentes y esquemas no locales.
 
-Controles del modo externo:
+Controles de Ollama:
 
-- endpoint HTTPS absoluto y sin credenciales incrustadas;
+- sin clave API ni encabezados de autorización;
 - anonimización obligatoria de alias registrados;
 - selección explícita de cada elemento;
-- tres confirmaciones de consentimiento;
-- límites de entrada, salida, costo, tiempo y reintentos;
-- bloqueo ante señales de inyección no reconocidas;
-- fallback local opcional;
+- `stream=false` y `think=false`;
+- temperatura determinista y cero reintentos;
+- límites de entrada, salida, contexto y tiempo;
+- costo registrado como USD 0;
+- fallback al proveedor simulado si Ollama no responde;
 - revisión humana obligatoria antes de aprobar;
-- auditoría separada sin contenido ni secretos.
+- auditoría sin contenido sensible.
 
 Las instrucciones encontradas dentro de hechos, pruebas o fuentes se tratan
 como datos. La detección es heurística y no reemplaza la revisión humana.
@@ -307,12 +308,16 @@ Red: desactivada
 
 Este modo no sustituye una prueba con un adaptador comercial específico.
 
-## Sprint 4.5 · Adaptador específico OpenAI Responses API
+## Sprint 4.5 · Adaptador OpenAI archivado y no activo
 
-La versión 0.7.0 incorpora un adaptador específico para OpenAI mediante el
+La versión 0.7.0 incorporó un adaptador específico para OpenAI mediante el
 endpoint fijo `https://api.openai.com/v1/responses`. El adaptador usa la
 biblioteca estándar de Python, no añade dependencias y permanece desactivado
 hasta que todas las variables requeridas estén configuradas.
+
+> Estado actual: este adaptador se conserva solo como referencia histórica.
+> `app.py` no lo instancia y la interfaz no ofrece OpenAI ni proveedores
+> comerciales. La integración activa de v0.7.1 es Ollama local gratuito.
 
 Controles obligatorios:
 
@@ -370,4 +375,57 @@ Success: no issues found
 - el sprint no realiza llamadas reales durante pruebas automatizadas;
 - una primera llamada real debe usar exclusivamente el expediente de
   demostración y un contexto reducido.
+
+## Sprint 4.5.1 · Ollama local gratuito
+
+La versión 0.7.1 activa un proveedor específico para Ollama con el modelo
+predeterminado `qwen3:1.7b`.
+
+```text
+Proveedor: Ollama local gratuito
+Endpoint: http://127.0.0.1:11434/api/chat
+Modelo: qwen3:1.7b
+Clave API: no requerida
+Costo por solicitud: USD 0
+Entrada máxima: 3072 tokens estimados
+Salida máxima: 512 tokens
+Ventana de contexto: 4096 tokens
+Reintentos: 0
+Razonamiento visible: desactivado
+Streaming: desactivado
+```
+
+La interfaz solo ofrece:
+
+```text
+Simulado local
+Ollama local gratuito
+Prueba externa controlada
+```
+
+OpenAI y el proveedor externo genérico no forman parte del flujo activo.
+
+### Variables opcionales
+
+Consulta `docs/OLLAMA_ENV.example.txt`. Con la instalación estándar de Ollama
+no es necesario configurar variables.
+
+### Validación
+
+```powershell
+python -c "from importlib.metadata import version; import ius_razon; print(version('ius-razon')); print(ius_razon.__version__)"
+ruff check .
+python -m mypy --config-file .\pyproject.toml src
+pytest -v
+```
+
+Resultado previsto:
+
+```text
+0.7.1
+0.7.1
+All checks passed!
+Success: no issues found
+142 passed
+```
 
