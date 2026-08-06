@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ius-razon"
-version = "0.5.0"
+version = "0.5.1"
 description = "Prototipo local de análisis jurídico estructurado y trazable."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,11 +37,11 @@ target-version = "py311"
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.mypy]
-follow_imports_for_stubs = true
 python_version = "3.11"
 strict = true
 mypy_path = "src"
 packages = ["ius_razon"]
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]

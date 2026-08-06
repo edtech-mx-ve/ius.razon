@@ -3266,7 +3266,7 @@ def render_integral_report(case_id: str) -> None:
 
 def main() -> None:
     st.title("⚖️ IUS-Razón")
-    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 4.3 v0.5.0")
+    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 4.3.1 v0.5.1")
     render_notice()
 
     with st.sidebar:
@@ -3289,7 +3289,7 @@ def main() -> None:
             """
             ### Comienza creando un expediente
 
-            Sprint 4.3 incorpora un asistente IA controlado en modo
+            Sprint 4.3.1 conserva el asistente IA controlado en modo
             simulado local, con selección explícita de contexto, anonimización,
             referencias internas, detección de afirmaciones sin respaldo y
             revisión humana obligatoria.

@@ -1,4 +1,4 @@
-# IUS-Razón — Sprint 4.3 (v0.5.0)
+# IUS-Razón — Sprint 4.3.1 (v0.5.1)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
 simbólico, construir redes argumentales, generar informes trazables y preparar
@@ -12,6 +12,33 @@ de aprobación o rechazo.
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
 > obligatoriedad o aplicabilidad de fuentes.
+
+
+## Hotfix Sprint 4.3.1
+
+La versión 0.5.1 corrige una coincidencia parcial del anonimizador. Un alias
+como `Compradora A` ya no puede consumir la primera letra de palabras
+posteriores como `afirma` o `acredita`.
+
+Comportamiento verificado:
+
+```text
+La parte compradora afirma.  → La parte compradora afirma.
+Compradora A afirma.         → PARTE-001 afirma.
+COMPRADORA A, acredita.      → PARTE-001, acredita.
+```
+
+La sustitución ahora:
+
+- exige límites léxicos completos;
+- preserva espacios y puntuación;
+- procesa alias solapados en una sola pasada;
+- evita reanonimizar marcadores `PARTE-###`;
+- deduplica variantes del mismo alias ignorando mayúsculas;
+- mantiene resultados deterministas e idempotentes.
+
+No se modifica el esquema SQLite ni los registros `IA-###` existentes. Para
+comprobar la corrección debe generarse un borrador nuevo.
 
 ## Incremento Sprint 4.3
 
@@ -37,7 +64,7 @@ La pestaña `Asistente IA` permite:
 
 ## Seguridad y privacidad
 
-La versión 0.5.0 funciona exclusivamente con:
+La versión 0.5.1 funciona exclusivamente con:
 
 ```text
 Proveedor: Simulado local
@@ -130,7 +157,7 @@ Aplica el parche:
 
 ```powershell
 Expand-Archive `
-    .\IUS_Razon_Sprint_4_3_patch_v0.5.0.zip `
+    .\IUS_Razon_Sprint_4_3_1_patch_v0.5.1.zip `
     -DestinationPath . `
     -Force
 ```
@@ -154,8 +181,8 @@ python -c "from importlib.metadata import version; import ius_razon; print('Inst
 Resultado esperado:
 
 ```text
-Instalada: 0.5.0
-Módulo: 0.5.0
+Instalada: 0.5.1
+Módulo: 0.5.1
 Ruta: ...\src\ius_razon\__init__.py
 ```
 
@@ -172,7 +199,7 @@ Resultado esperado:
 ```text
 All checks passed!
 Success: no issues found
-82 passed
+88 passed
 ```
 
 Inicia la interfaz:

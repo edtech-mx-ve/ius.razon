@@ -83,28 +83,61 @@ def anonymize_text(
     value: str,
     mapping: Mapping[str, str],
 ) -> str:
-    """Sustituye alias conocidos en un texto independiente."""
+    """Sustituye alias completos sin alterar palabras vecinas ni marcadores."""
 
     anonymized = sanitize_text(value)
-    for alias, replacement in mapping.items():
-        pattern = re.compile(re.escape(alias), re.IGNORECASE)
-        anonymized = pattern.sub(replacement, anonymized)
-    return anonymized
+    normalized_pairs = sorted(
+        (
+            (sanitize_text(alias), sanitize_text(replacement))
+            for alias, replacement in mapping.items()
+            if sanitize_text(alias) and sanitize_text(replacement)
+        ),
+        key=lambda pair: (-len(pair[0]), pair[0].casefold(), pair[1]),
+    )
+    if not normalized_pairs:
+        return anonymized
+
+    replacements: dict[str, str] = {}
+    ordered_aliases: list[str] = []
+    for alias, replacement in normalized_pairs:
+        folded = alias.casefold()
+        if folded not in replacements:
+            replacements[folded] = replacement
+            ordered_aliases.append(alias)
+
+    alternatives = "|".join(re.escape(alias) for alias in ordered_aliases)
+    pattern = re.compile(
+        rf"(?<!\w)(?:{alternatives})(?!\w)(?!-\d{{3}}\b)",
+        re.IGNORECASE,
+    )
+
+    def replace_alias(match: re.Match[str]) -> str:
+        return replacements[match.group(0).casefold()]
+
+    return pattern.sub(replace_alias, anonymized)
 
 
 def anonymize_context_items(
     items: Iterable[ContextItem],
     aliases: Iterable[str],
 ) -> tuple[list[ContextItem], dict[str, str]]:
-    """Sustituye alias de partes por identificadores neutros y reproducibles."""
+    """Sustituye alias completos por identificadores neutros y reproducibles."""
+
+    candidates = sorted(
+        {
+            sanitized
+            for alias in aliases
+            if (sanitized := sanitize_text(alias))
+        },
+        key=lambda value: (value.casefold(), value),
+    )
+    aliases_by_fold: dict[str, str] = {}
+    for alias in candidates:
+        aliases_by_fold.setdefault(alias.casefold(), alias)
 
     cleaned_aliases = sorted(
-        {
-            sanitize_text(alias)
-            for alias in aliases
-            if sanitize_text(alias)
-        },
-        key=lambda value: (-len(value), value.casefold()),
+        aliases_by_fold.values(),
+        key=lambda value: (-len(value), value.casefold(), value),
     )
     mapping = {
         alias: f"PARTE-{index:03d}"
