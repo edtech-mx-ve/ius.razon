@@ -65,11 +65,13 @@ from ius_razon.security.llm_external_config import (
     ExternalProviderConfigurationError,
     ExternalProviderSettings,
 )
+from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
 from ius_razon.services.llm_assistant_service import LLMAssistantService
 from ius_razon.services.llm_provider import (
+    ControlledExternalTestProvider,
     DeterministicMockProvider,
     ExternalHTTPProvider,
 )
@@ -146,6 +148,8 @@ def build_services() -> tuple[
         external_provider=external_provider,
         external_settings=external_settings,
         external_configuration_error=external_error,
+        integration_test_provider=ControlledExternalTestProvider(),
+        integration_test_policy=ControlledExternalTestPolicy(),
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )

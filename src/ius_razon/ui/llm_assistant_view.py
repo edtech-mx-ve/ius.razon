@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import streamlit as st
 
 from ius_razon.domain.llm_models import (
@@ -37,6 +39,8 @@ def render_llm_assistant(
         )
 
     provider_options = [ProviderMode.SIMULATED]
+    if assistant_service.integration_test_available:
+        provider_options.append(ProviderMode.EXTERNAL_TEST)
     if assistant_service.external_available:
         provider_options.append(ProviderMode.EXTERNAL)
 
@@ -46,6 +50,10 @@ def render_llm_assistant(
         key=f"llm_provider_{case_id}",
     )
     provider_mode = ProviderMode(provider_value)
+    controlled_mode = provider_mode in {
+        ProviderMode.EXTERNAL_TEST,
+        ProviderMode.EXTERNAL,
+    }
 
     if provider_mode is ProviderMode.SIMULATED:
         st.info(
@@ -55,10 +63,21 @@ def render_llm_assistant(
             f"Proveedor: {assistant_service.provider_name} · "
             f"Modelo: {assistant_service.model_name}"
         )
+    elif provider_mode is ProviderMode.EXTERNAL_TEST:
+        summary = assistant_service.integration_test_safe_summary
+        st.info(
+            "Prueba externa controlada: ejercita consentimiento, límites y auditoría "
+            "con un proveedor falso local. No usa red ni clave API."
+        )
+        st.caption(
+            f"Proveedor: {summary.get('provider_name', '')} · "
+            f"Modelo: {summary.get('model', '')} · "
+            "Red: desactivada"
+        )
     else:
         summary = assistant_service.external_safe_summary
         st.warning(
-            "Modo externo: el contexto anonimizado seleccionado será enviado "
+            "Modo externo real: el contexto anonimizado seleccionado será enviado "
             "fuera del equipo únicamente después de tres confirmaciones."
         )
         st.caption(
@@ -69,7 +88,7 @@ def render_llm_assistant(
 
     if not assistant_service.external_available:
         st.caption(
-            "El proveedor externo está desactivado. El modo local sigue disponible."
+            "El proveedor externo real está desactivado. Los modos locales siguen disponibles."
         )
 
     issues = case_service.list_legal_issues(case_id)
@@ -182,8 +201,8 @@ def render_llm_assistant(
     anonymize = controls[0].checkbox(
         "Anonimizar partes",
         value=True,
-        disabled=provider_mode is ProviderMode.EXTERNAL,
-        help="El modo externo exige anonimización.",
+        disabled=controlled_mode,
+        help="Los modos de prueba controlada y externo real exigen anonimización.",
         key=f"llm_anonymize_{case_id}_{issue_id}_{provider_mode.value}",
     )
     max_context = controls[1].number_input(
@@ -213,8 +232,27 @@ def render_llm_assistant(
     authorized_external = False
     accepted_cost = False
     acknowledge_risks = False
+    confirm_single_call = False
 
-    if provider_mode is ProviderMode.EXTERNAL:
+    if provider_mode is ProviderMode.EXTERNAL_TEST:
+        profile = assistant_service.integration_test_safe_summary
+        max_input_tokens = cast(int, profile.get("max_input_tokens", 2048))
+        max_output_tokens = cast(int, profile.get("max_output_tokens", 256))
+        max_cost_usd = cast(float, profile.get("max_cost_usd", 0.01))
+        timeout_seconds = cast(int, profile.get("timeout_seconds", 15))
+        max_retries = cast(int, profile.get("max_retries", 0))
+        allow_fallback = cast(bool, profile.get("fallback_required", True))
+        st.markdown("### Perfil fijo de prueba")
+        profile_metrics = st.columns(5)
+        profile_metrics[0].metric("Entrada", f"{max_input_tokens} tokens")
+        profile_metrics[1].metric("Salida", f"{max_output_tokens} tokens")
+        profile_metrics[2].metric("Costo máximo", f"USD {max_cost_usd:.4f}")
+        profile_metrics[3].metric("Tiempo", f"{timeout_seconds} s")
+        profile_metrics[4].metric("Reintentos", max_retries)
+        st.caption(
+            "Fallback local obligatorio · una sola invocación · sin red · sin clave API"
+        )
+    elif provider_mode is ProviderMode.EXTERNAL:
         limits = st.columns(3)
         max_input_tokens = int(
             limits[0].number_input(
@@ -274,7 +312,7 @@ def render_llm_assistant(
             authorized_external_call=authorized_external,
             accepted_cost_limit=accepted_cost,
         )
-        if provider_mode is ProviderMode.EXTERNAL
+        if controlled_mode
         else None
     )
 
@@ -286,9 +324,7 @@ def render_llm_assistant(
         instructions=instructions or None,
         selected_categories=selected_categories,
         selected_codes=selected_codes,
-        anonymize_parties=(
-            True if provider_mode is ProviderMode.EXTERNAL else anonymize
-        ),
+        anonymize_parties=True if controlled_mode else anonymize,
         max_context_chars=int(max_context),
         max_output_chars=int(max_output_chars),
         provider_mode=provider_mode,
@@ -300,6 +336,7 @@ def render_llm_assistant(
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
         allow_fallback=allow_fallback,
+        confirm_single_call=confirm_single_call,
     )
 
     try:
@@ -308,8 +345,13 @@ def render_llm_assistant(
         st.error(f"No fue posible generar la vista previa: {exc}")
         return
 
-    if provider_mode is ProviderMode.EXTERNAL:
-        st.markdown("### Vista previa del envío externo")
+    if controlled_mode:
+        title = (
+            "### Vista previa de la prueba controlada"
+            if provider_mode is ProviderMode.EXTERNAL_TEST
+            else "### Vista previa del envío externo"
+        )
+        st.markdown(title)
         metrics = st.columns(4)
         metrics[0].metric("Elementos", len(preview.items))
         metrics[1].metric("Caracteres", preview.char_count)
@@ -341,13 +383,22 @@ def render_llm_assistant(
             value=False,
         )
         authorized_external = st.checkbox(
-            "Autorizo esta llamada externa específica",
+            (
+                "Autorizo esta prueba específica sin red"
+                if provider_mode is ProviderMode.EXTERNAL_TEST
+                else "Autorizo esta llamada externa específica"
+            ),
             value=False,
         )
         accepted_cost = st.checkbox(
             "Acepto el límite de costo mostrado",
             value=False,
         )
+        if provider_mode is ProviderMode.EXTERNAL_TEST:
+            confirm_single_call = st.checkbox(
+                "Confirmo una sola invocación de prueba y cero reintentos",
+                value=False,
+            )
         consent = ExternalConsent(
             reviewed_context=reviewed_context,
             authorized_external_call=authorized_external,
@@ -358,13 +409,19 @@ def render_llm_assistant(
         update={
             "external_consent": consent,
             "acknowledge_risk_flags": acknowledge_risks,
+            "confirm_single_call": confirm_single_call,
         }
     )
 
+    button_label = (
+        "Ejecutar prueba externa controlada"
+        if provider_mode is ProviderMode.EXTERNAL_TEST
+        else "Generar borrador controlado"
+    )
     submitted = st.button(
-        "Generar borrador controlado",
+        button_label,
         type="primary",
-        key=f"llm_generate_{case_id}_{issue_id}",
+        key=f"llm_generate_{case_id}_{issue_id}_{provider_mode.value}",
     )
 
     state_key = f"llm_current_draft_{case_id}_{issue_id}"
@@ -378,7 +435,7 @@ def render_llm_assistant(
             )
             if record.fallback_used:
                 st.warning(
-                    "La llamada externa falló y se utilizó el proveedor local."
+                    "El proveedor seleccionado falló y se utilizó el proveedor local."
                 )
         except Exception as exc:
             st.error(f"No fue posible generar el borrador: {exc}")

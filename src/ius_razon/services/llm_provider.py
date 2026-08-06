@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -171,7 +172,7 @@ class ExternalHTTPProvider:
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "IUS-Razon/0.6.0",
+            "User-Agent": "IUS-Razon/0.6.1",
         }
 
         last_error: ExternalProviderError | None = None
@@ -440,3 +441,68 @@ class DeterministicMockProvider:
         if not kept:
             raise ValueError("El límite de salida es insuficiente.")
         return "\n".join(kept)
+
+
+class ControlledExternalTestProvider:
+    """Proveedor falso que ejercita el contrato externo sin usar red."""
+
+    def __init__(
+        self,
+        delegate: LLMProvider | None = None,
+        model_name: str = "ius-razon-external-test-v1",
+    ) -> None:
+        self._delegate = delegate or DeterministicMockProvider()
+        self._model_name = model_name
+
+    @property
+    def provider_name(self) -> str:
+        return "Externo falso de integración"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        """Genera una respuesta local con la misma forma del adaptador externo."""
+
+        effective_request = request.model_copy(
+            update={
+                "max_output_chars": min(
+                    request.max_output_chars,
+                    request.max_output_tokens * 4,
+                )
+            }
+        )
+        response = self._delegate.generate(effective_request)
+        input_chars = sum(
+            len(item.code)
+            + len(item.category.value)
+            + len(item.title)
+            + len(item.content)
+            for item in request.context_items
+        )
+        input_tokens = max(1, (input_chars + 3) // 4)
+        output_tokens = max(1, (len(response.text) + 3) // 4)
+        fingerprint = hashlib.sha256(
+            (
+                request.task.value
+                + "|"
+                + "|".join(request.allowed_codes)
+                + "|"
+                + response.text
+            ).encode("utf-8")
+        ).hexdigest()[:20]
+        return response.model_copy(
+            update={
+                "provider_name": self.provider_name,
+                "model_name": self.model_name,
+                "request_id": f"integration-test-{fingerprint}",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "estimated_cost_usd": 0.0,
+                "external_call": False,
+                "fallback_used": False,
+                "fallback_reason": None,
+            }
+        )
+
