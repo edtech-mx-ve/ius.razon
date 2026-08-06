@@ -61,11 +61,18 @@ from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
+from ius_razon.security.llm_external_config import (
+    ExternalProviderConfigurationError,
+    ExternalProviderSettings,
+)
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
 from ius_razon.services.llm_assistant_service import LLMAssistantService
-from ius_razon.services.llm_provider import DeterministicMockProvider
+from ius_razon.services.llm_provider import (
+    DeterministicMockProvider,
+    ExternalHTTPProvider,
+)
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
 
@@ -119,11 +126,26 @@ def build_services() -> tuple[
         reasoning_service=reasoning,
         argumentation_service=argumentation,
     )
+    external_error: str | None = None
+    try:
+        external_settings = ExternalProviderSettings.from_env()
+    except ExternalProviderConfigurationError as exc:
+        external_error = str(exc)
+        external_settings = ExternalProviderSettings()
+
+    external_provider = (
+        ExternalHTTPProvider(external_settings)
+        if external_settings.configured
+        else None
+    )
     llm_assistant = LLMAssistantService(
         case_service=case_service,
         reasoning_service=reasoning,
         argumentation_service=argumentation,
         provider=DeterministicMockProvider(),
+        external_provider=external_provider,
+        external_settings=external_settings,
+        external_configuration_error=external_error,
         repository=llm_repository,
         backup_dir=config.data_dir / "backups",
     )

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Callable
-from typing import Protocol
+import time
+from collections.abc import Callable, Mapping
+from typing import Protocol, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from ius_razon.domain.llm_models import (
     AssistantTask,
@@ -11,6 +15,7 @@ from ius_razon.domain.llm_models import (
     ProviderRequest,
     ProviderResponse,
 )
+from ius_razon.security.llm_external_config import ExternalProviderSettings
 
 
 class LLMProvider(Protocol):
@@ -32,6 +37,218 @@ class LLMProvider(Protocol):
         """Genera una respuesta sin modificar el expediente."""
 
         ...
+
+
+class ExternalProviderError(RuntimeError):
+    """Fallo controlado sin exponer secretos ni contenido sensible."""
+
+    def __init__(self, message: str, *, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class JSONTransport(Protocol):
+    """Transporte inyectable para aislar red y facilitar pruebas."""
+
+    def post_json(
+        self,
+        endpoint: str,
+        *,
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        """Envía JSON y devuelve un objeto JSON."""
+
+        ...
+
+
+class UrllibJSONTransport:
+    """Transporte HTTPS basado únicamente en la biblioteca estándar."""
+
+    def post_json(
+        self,
+        endpoint: str,
+        *,
+        headers: Mapping[str, str],
+        payload: Mapping[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        encoded = json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = Request(
+            endpoint,
+            data=encoded,
+            headers=dict(headers),
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read(2_000_001)
+        except HTTPError as exc:
+            raise ExternalProviderError(
+                "El proveedor externo rechazó la solicitud.",
+                error_code=f"http_{exc.code}",
+            ) from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise ExternalProviderError(
+                "No fue posible comunicarse con el proveedor externo.",
+                error_code="network_error",
+            ) from exc
+        if len(raw) > 2_000_000:
+            raise ExternalProviderError(
+                "La respuesta externa excedió el límite permitido.",
+                error_code="response_too_large",
+            )
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ExternalProviderError(
+                "El proveedor externo devolvió JSON inválido.",
+                error_code="invalid_json",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ExternalProviderError(
+                "La respuesta externa debe ser un objeto JSON.",
+                error_code="invalid_schema",
+            )
+        return {str(key): value for key, value in parsed.items()}
+
+
+class ExternalHTTPProvider:
+    """Proveedor JSON externo con límites, reintentos y costos controlados."""
+
+    def __init__(
+        self,
+        settings: ExternalProviderSettings,
+        *,
+        transport: JSONTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        settings.validate()
+        if not settings.configured:
+            raise ValueError("El proveedor externo no está habilitado y configurado.")
+        self._settings = settings
+        self._transport = transport or UrllibJSONTransport()
+        self._sleep = sleep
+
+    @property
+    def provider_name(self) -> str:
+        return "Externo JSON controlado"
+
+    @property
+    def model_name(self) -> str:
+        return self._settings.model
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        """Realiza una llamada HTTPS sin persistir ni registrar la clave."""
+
+        timeout_seconds = min(
+            request.timeout_seconds,
+            self._settings.timeout_seconds,
+        )
+        max_retries = min(request.max_retries, self._settings.max_retries)
+        max_output_tokens = min(
+            request.max_output_tokens,
+            self._settings.max_output_tokens,
+        )
+        payload: dict[str, object] = {
+            "model": self.model_name,
+            "system_instruction": request.system_instruction,
+            "task": request.task.value,
+            "instructions": request.instructions,
+            "context": [
+                item.model_dump(mode="json")
+                for item in request.context_items
+            ],
+            "allowed_codes": list(request.allowed_codes),
+            "max_output_tokens": max_output_tokens,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._settings.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "IUS-Razon/0.6.0",
+        }
+
+        last_error: ExternalProviderError | None = None
+        response_payload: dict[str, object] | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response_payload = self._transport.post_json(
+                    self._settings.endpoint,
+                    headers=headers,
+                    payload=payload,
+                    timeout_seconds=timeout_seconds,
+                )
+                break
+            except ExternalProviderError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    raise
+                self._sleep(min(0.25 * (2**attempt), 1.0))
+        if response_payload is None:
+            raise last_error or ExternalProviderError(
+                "La llamada externa no produjo una respuesta.",
+                error_code="empty_response",
+            )
+
+        text_value = response_payload.get("output_text")
+        if not isinstance(text_value, str):
+            text_value = response_payload.get("text")
+        if not isinstance(text_value, str) or not text_value.strip():
+            raise ExternalProviderError(
+                "La respuesta externa no contiene texto utilizable.",
+                error_code="missing_output_text",
+            )
+        text = text_value.strip()
+        if len(text) > request.max_output_chars:
+            text = text[: request.max_output_chars].rstrip()
+
+        usage = response_payload.get("usage")
+        usage_mapping = (
+            cast(dict[str, object], usage)
+            if isinstance(usage, dict)
+            else {}
+        )
+        input_tokens = self._optional_nonnegative_int(
+            usage_mapping.get("input_tokens")
+        )
+        output_tokens = self._optional_nonnegative_int(
+            usage_mapping.get("output_tokens")
+        )
+        estimated_cost = (
+            self._settings.estimate_cost(input_tokens or 0, output_tokens or 0)
+            if input_tokens is not None or output_tokens is not None
+            else None
+        )
+        request_id_value = response_payload.get("request_id")
+        request_id = (
+            str(request_id_value)[:240]
+            if request_id_value is not None
+            else None
+        )
+        return ProviderResponse(
+            text=text,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            request_id=request_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=estimated_cost,
+            external_call=True,
+        )
+
+    @staticmethod
+    def _optional_nonnegative_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        return None
 
 
 class DeterministicMockProvider:

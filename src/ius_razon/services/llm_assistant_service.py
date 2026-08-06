@@ -13,14 +13,20 @@ from ius_razon.domain.llm_models import (
     ContextPreview,
     DraftReview,
     DraftStatus,
+    ProviderCallAuditCreate,
+    ProviderCallAuditRecord,
+    ProviderCallStatus,
+    ProviderMode,
     ProviderRequest,
 )
 from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
+from ius_razon.security.llm_external_config import ExternalProviderSettings
 from ius_razon.security.llm_guardrails import (
     anonymize_context_items,
     anonymize_text,
     detect_prompt_injection,
+    estimate_tokens_from_chars,
     evaluate_draft,
     sanitize_text,
     stable_input_hash,
@@ -29,7 +35,10 @@ from ius_razon.security.llm_guardrails import (
 )
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
-from ius_razon.services.llm_provider import LLMProvider
+from ius_razon.services.llm_provider import (
+    ExternalProviderError,
+    LLMProvider,
+)
 from ius_razon.services.reasoning_service import ReasoningService
 
 LOGGER = logging.getLogger(__name__)
@@ -44,7 +53,7 @@ _SYSTEM_INSTRUCTION = (
 
 
 class LLMAssistantService:
-    """Orquesta contexto, proveedor, guardas y revisión humana."""
+    """Orquesta contexto, proveedores, guardas, auditoría y revisión humana."""
 
     def __init__(
         self,
@@ -55,25 +64,59 @@ class LLMAssistantService:
         provider: LLMProvider,
         repository: LLMRepository,
         backup_dir: Path | None = None,
+        external_provider: LLMProvider | None = None,
+        external_settings: ExternalProviderSettings | None = None,
+        external_configuration_error: str | None = None,
     ) -> None:
         self._case_service = case_service
         self._reasoning_service = reasoning_service
         self._argumentation_service = argumentation_service
         self._provider = provider
+        self._external_provider = external_provider
+        self._external_settings = external_settings
+        self._external_configuration_error = external_configuration_error
         self._repository = repository
         self._backup_dir = backup_dir
 
     @property
     def provider_name(self) -> str:
-        """Nombre visible del proveedor activo."""
+        """Nombre visible del proveedor local."""
 
         return self._provider.provider_name
 
     @property
     def model_name(self) -> str:
-        """Nombre visible del modelo activo."""
+        """Nombre visible del modelo local."""
 
         return self._provider.model_name
+
+    @property
+    def external_available(self) -> bool:
+        """Indica si el proveedor externo está habilitado y configurado."""
+
+        return bool(
+            self._external_provider is not None
+            and self._external_settings is not None
+            and self._external_settings.configured
+        )
+
+    @property
+    def external_configuration_error(self) -> str | None:
+        """Error de configuración seguro para mostrar al usuario."""
+
+        return self._external_configuration_error
+
+    @property
+    def external_safe_summary(self) -> dict[str, object]:
+        """Estado externo visible sin incluir la clave."""
+
+        if self._external_settings is None:
+            return {
+                "enabled": False,
+                "configured": False,
+                "api_key_configured": False,
+            }
+        return self._external_settings.safe_summary()
 
     def list_context_items(
         self,
@@ -124,7 +167,7 @@ class LLMAssistantService:
         return items
 
     def preview_context(self, request: AssistantRequest) -> ContextPreview:
-        """Valida, filtra, anonimiza y limita el contexto antes de generar."""
+        """Valida, filtra, anonimiza y estima el envío antes de generar."""
 
         available = self.list_context_items(
             request.case_id,
@@ -168,12 +211,26 @@ class LLMAssistantService:
             + len(item.content)
             for item in limited
         )
+        estimated_input_tokens = estimate_tokens_from_chars(char_count)
+        estimated_cost = 0.0
+        if (
+            request.provider_mode is ProviderMode.EXTERNAL
+            and self._external_settings is not None
+        ):
+            estimated_cost = self._external_settings.estimate_cost(
+                estimated_input_tokens,
+                request.max_output_tokens,
+            )
         return ContextPreview(
             items=limited,
             risk_flags=risk_flags,
             anonymization_map=anonymization_map,
             char_count=char_count,
             input_hash=input_hash,
+            provider_mode=request.provider_mode,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=request.max_output_tokens,
+            estimated_max_cost_usd=estimated_cost,
         )
 
     def generate_draft(
@@ -199,8 +256,49 @@ class LLMAssistantService:
             allowed_codes=allowed_codes,
             max_output_chars=request.max_output_chars,
             system_instruction=_SYSTEM_INSTRUCTION,
+            max_output_tokens=request.max_output_tokens,
+            timeout_seconds=request.timeout_seconds,
+            max_retries=request.max_retries,
+            max_cost_usd=request.max_cost_usd,
         )
-        response = self._provider.generate(provider_request)
+
+        provider = self._provider
+        if request.provider_mode is ProviderMode.EXTERNAL:
+            self._validate_external_preflight(request, preview)
+            if self._external_provider is None:
+                self._audit_blocked(
+                    request,
+                    preview,
+                    error_code="external_not_configured",
+                )
+                raise ValueError("El proveedor externo no está configurado.")
+            provider = self._external_provider
+
+        try:
+            response = provider.generate(provider_request)
+        except ExternalProviderError as exc:
+            if (
+                request.provider_mode is ProviderMode.EXTERNAL
+                and request.allow_fallback
+            ):
+                local_response = self._provider.generate(provider_request)
+                response = local_response.model_copy(
+                    update={
+                        "external_call": True,
+                        "fallback_used": True,
+                        "fallback_reason": exc.error_code,
+                    }
+                )
+            else:
+                self._audit_failed(
+                    request,
+                    preview,
+                    provider_name=provider.provider_name,
+                    model_name=provider.model_name,
+                    error_code=exc.error_code,
+                )
+                raise
+
         response_text = sanitize_text(response.text)
         evaluation = evaluate_draft(response_text, allowed_codes)
         payload = AssistantDraftCreate(
@@ -219,20 +317,162 @@ class LLMAssistantService:
             citation_coverage=evaluation.citation_coverage,
             input_hash=preview.input_hash,
             output_hash=text_hash(response_text),
+            provider_mode=request.provider_mode,
+            external_call=response.external_call,
+            fallback_used=response.fallback_used,
+            fallback_reason=response.fallback_reason,
+            provider_request_id=response.request_id,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            estimated_cost_usd=response.estimated_cost_usd,
         )
         record = self._repository.add_draft(payload)
+        call_status = (
+            ProviderCallStatus.FALLBACK
+            if response.fallback_used
+            else ProviderCallStatus.SUCCEEDED
+        )
+        audit = self._repository.add_provider_call(
+            ProviderCallAuditCreate(
+                case_id=request.case_id,
+                issue_id=request.issue_id,
+                provider_mode=request.provider_mode,
+                provider_name=response.provider_name,
+                model_name=response.model_name,
+                status=call_status,
+                selected_codes=allowed_codes,
+                input_hash=preview.input_hash,
+                output_hash=record.output_hash,
+                external_call=response.external_call,
+                fallback_used=response.fallback_used,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                estimated_cost_usd=response.estimated_cost_usd,
+                error_code=response.fallback_reason,
+            )
+        )
+        self._repository.link_provider_call_to_draft(audit.id, record.id)
         LOGGER.info(
             "Borrador asistivo generado. case_id=%s issue_id=%s draft_id=%s "
-            "provider=%s model=%s input_hash=%s output_hash=%s",
+            "provider=%s model=%s mode=%s input_hash=%s output_hash=%s",
             request.case_id,
             request.issue_id,
             record.id,
             response.provider_name,
             response.model_name,
+            request.provider_mode.value,
             record.input_hash,
             record.output_hash,
         )
         return record
+
+    def _validate_external_preflight(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+    ) -> None:
+        consent = request.external_consent
+        if consent is None or not consent.complete:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="consent_incomplete",
+            )
+            raise ValueError(
+                "La llamada externa requiere las tres confirmaciones de consentimiento."
+            )
+        settings = self._external_settings
+        if settings is None or not settings.configured:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="external_not_configured",
+            )
+            raise ValueError("El proveedor externo no está configurado.")
+        if preview.risk_flags and not request.acknowledge_risk_flags:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="risk_flags_not_acknowledged",
+            )
+            raise ValueError(
+                "Existen señales de instrucciones incrustadas; revísalas y "
+                "confirma el riesgo antes de autorizar el envío."
+            )
+        input_limit = min(request.max_input_tokens, settings.max_input_tokens)
+        if preview.estimated_input_tokens > input_limit:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="input_token_limit",
+            )
+            raise ValueError("El contexto supera el límite de tokens de entrada.")
+        if request.max_output_tokens > settings.max_output_tokens:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="output_token_limit",
+            )
+            raise ValueError("La salida solicitada supera el límite configurado.")
+        cost_limit = min(request.max_cost_usd, settings.max_cost_usd)
+        if preview.estimated_max_cost_usd > cost_limit:
+            self._audit_blocked(
+                request,
+                preview,
+                error_code="cost_limit",
+            )
+            raise ValueError("El costo máximo estimado supera el presupuesto autorizado.")
+
+    def _audit_blocked(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+        *,
+        error_code: str,
+    ) -> None:
+        settings = self._external_settings
+        self._repository.add_provider_call(
+            ProviderCallAuditCreate(
+                case_id=request.case_id,
+                issue_id=request.issue_id,
+                provider_mode=request.provider_mode,
+                provider_name="Externo JSON controlado",
+                model_name=settings.model if settings else "no-configurado",
+                status=ProviderCallStatus.BLOCKED,
+                selected_codes=[item.code for item in preview.items],
+                input_hash=preview.input_hash,
+                external_call=False,
+                fallback_used=False,
+                estimated_cost_usd=preview.estimated_max_cost_usd,
+                error_code=error_code,
+            )
+        )
+
+    def _audit_failed(
+        self,
+        request: AssistantRequest,
+        preview: ContextPreview,
+        *,
+        provider_name: str,
+        model_name: str,
+        error_code: str,
+    ) -> None:
+        self._repository.add_provider_call(
+            ProviderCallAuditCreate(
+                case_id=request.case_id,
+                issue_id=request.issue_id,
+                provider_mode=request.provider_mode,
+                provider_name=provider_name,
+                model_name=model_name,
+                status=ProviderCallStatus.FAILED,
+                selected_codes=[item.code for item in preview.items],
+                input_hash=preview.input_hash,
+                external_call=True,
+                fallback_used=False,
+                estimated_cost_usd=preview.estimated_max_cost_usd,
+                error_code=error_code,
+            )
+        )
 
     def approve_draft(
         self,
@@ -324,6 +564,21 @@ class LLMAssistantService:
         """Lista el historial de borradores."""
 
         return self._repository.list_drafts(
+            case_id,
+            issue_id,
+            limit=limit,
+        )
+
+    def list_provider_calls(
+        self,
+        case_id: str,
+        issue_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[ProviderCallAuditRecord]:
+        """Lista la auditoría de llamadas sin contenido ni secretos."""
+
+        return self._repository.list_provider_calls(
             case_id,
             issue_id,
             limit=limit,

@@ -211,6 +211,15 @@ def render_context(items: Iterable[ContextItem]) -> str:
     return "\n".join(parts)
 
 
+
+def estimate_tokens_from_chars(char_count: int) -> int:
+    """Estimación conservadora y reproducible: un token por cada cuatro caracteres."""
+
+    if char_count < 0:
+        raise ValueError("El número de caracteres no puede ser negativo.")
+    return max(1, (char_count + 3) // 4)
+
+
 def stable_input_hash(
     request_payload: Mapping[str, object],
     items: Iterable[ContextItem],

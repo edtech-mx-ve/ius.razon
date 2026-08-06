@@ -7,6 +7,8 @@ from ius_razon.domain.llm_models import (
     AssistantTask,
     ContextCategory,
     DraftStatus,
+    ExternalConsent,
+    ProviderMode,
 )
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.llm_assistant_service import LLMAssistantService
@@ -20,17 +22,55 @@ def render_llm_assistant(
     reasoning_service: ReasoningService,
     assistant_service: LLMAssistantService,
 ) -> None:
-    """Renderiza generación asistiva, evaluación y revisión humana."""
+    """Renderiza generación asistiva, consentimiento y revisión humana."""
 
     st.subheader("Asistente IA controlado")
-    st.warning(
-        "Modo simulado local: no se realizan llamadas externas ni se usan claves API. "
-        "El borrador no modifica hechos, fuentes, conclusiones ni argumentos."
-    )
     st.caption(
-        f"Proveedor: {assistant_service.provider_name} · "
-        f"Modelo: {assistant_service.model_name}"
+        "Los borradores no modifican hechos, fuentes, conclusiones ni argumentos. "
+        "Toda salida requiere revisión humana antes de aprobarse."
     )
+
+    if assistant_service.external_configuration_error:
+        st.error(
+            "Configuración externa inválida: "
+            + assistant_service.external_configuration_error
+        )
+
+    provider_options = [ProviderMode.SIMULATED]
+    if assistant_service.external_available:
+        provider_options.append(ProviderMode.EXTERNAL)
+
+    provider_value = st.selectbox(
+        "Proveedor",
+        options=[mode.value for mode in provider_options],
+        key=f"llm_provider_{case_id}",
+    )
+    provider_mode = ProviderMode(provider_value)
+
+    if provider_mode is ProviderMode.SIMULATED:
+        st.info(
+            "Modo simulado local: no se realizan llamadas externas ni se usan claves API."
+        )
+        st.caption(
+            f"Proveedor: {assistant_service.provider_name} · "
+            f"Modelo: {assistant_service.model_name}"
+        )
+    else:
+        summary = assistant_service.external_safe_summary
+        st.warning(
+            "Modo externo: el contexto anonimizado seleccionado será enviado "
+            "fuera del equipo únicamente después de tres confirmaciones."
+        )
+        st.caption(
+            f"Modelo: {summary.get('model', '')} · "
+            f"Host: {summary.get('endpoint_host', '')} · "
+            "Clave configurada: sí"
+        )
+
+    if not assistant_service.external_available:
+        st.caption(
+            "El proveedor externo está desactivado. El modo local sigue disponible."
+        )
 
     issues = case_service.list_legal_issues(case_id)
     if not issues:
@@ -123,70 +163,222 @@ def render_llm_assistant(
         st.info("Selecciona al menos un elemento de contexto.")
         return
 
-    with st.form(f"llm_generate_{case_id}_{issue_id}"):
-        task_value = st.selectbox(
-            "Tarea",
-            options=[task.value for task in AssistantTask],
+    task_value = st.selectbox(
+        "Tarea",
+        options=[task.value for task in AssistantTask],
+        key=f"llm_task_{case_id}_{issue_id}",
+    )
+    instructions = st.text_area(
+        "Indicación adicional opcional",
+        placeholder=(
+            "Ejemplo: prioriza la relación entre el pago, el vencimiento "
+            "y la conclusión provisional."
+        ),
+        max_chars=3000,
+        key=f"llm_instructions_{case_id}_{issue_id}",
+    )
+
+    controls = st.columns(3)
+    anonymize = controls[0].checkbox(
+        "Anonimizar partes",
+        value=True,
+        disabled=provider_mode is ProviderMode.EXTERNAL,
+        help="El modo externo exige anonimización.",
+        key=f"llm_anonymize_{case_id}_{issue_id}_{provider_mode.value}",
+    )
+    max_context = controls[1].number_input(
+        "Máximo de contexto",
+        min_value=1000,
+        max_value=50000,
+        value=12000,
+        step=1000,
+        key=f"llm_context_{case_id}_{issue_id}",
+    )
+    max_output_chars = controls[2].number_input(
+        "Máximo de salida en caracteres",
+        min_value=500,
+        max_value=20000,
+        value=8000,
+        step=500,
+        key=f"llm_output_chars_{case_id}_{issue_id}",
+    )
+
+    max_input_tokens = 16000
+    max_output_tokens = 2000
+    max_cost_usd = 0.10
+    timeout_seconds = 30
+    max_retries = 1
+    allow_fallback = True
+    reviewed_context = False
+    authorized_external = False
+    accepted_cost = False
+    acknowledge_risks = False
+
+    if provider_mode is ProviderMode.EXTERNAL:
+        limits = st.columns(3)
+        max_input_tokens = int(
+            limits[0].number_input(
+                "Máximo de tokens de entrada",
+                min_value=256,
+                max_value=200000,
+                value=16000,
+                step=256,
+            )
         )
-        instructions = st.text_area(
-            "Indicación adicional opcional",
-            placeholder=(
-                "Ejemplo: prioriza la relación entre el pago, el vencimiento "
-                "y la conclusión provisional."
-            ),
-            max_chars=3000,
+        max_output_tokens = int(
+            limits[1].number_input(
+                "Máximo de tokens de salida",
+                min_value=64,
+                max_value=32000,
+                value=2000,
+                step=64,
+            )
         )
-        controls = st.columns(3)
-        anonymize = controls[0].checkbox(
-            "Anonimizar partes",
+        max_cost_usd = float(
+            limits[2].number_input(
+                "Presupuesto máximo USD",
+                min_value=0.0,
+                max_value=100.0,
+                value=0.10,
+                step=0.01,
+                format="%.4f",
+            )
+        )
+        execution = st.columns(3)
+        timeout_seconds = int(
+            execution[0].number_input(
+                "Tiempo máximo en segundos",
+                min_value=5,
+                max_value=180,
+                value=30,
+                step=5,
+            )
+        )
+        max_retries = int(
+            execution[1].number_input(
+                "Reintentos máximos",
+                min_value=0,
+                max_value=3,
+                value=1,
+                step=1,
+            )
+        )
+        allow_fallback = execution[2].checkbox(
+            "Fallback al modo local",
             value=True,
-            help="Sustituye alias de las partes antes de construir el contexto.",
         )
-        max_context = controls[1].number_input(
-            "Máximo de contexto",
-            min_value=1000,
-            max_value=50000,
-            value=12000,
-            step=1000,
+
+    consent = (
+        ExternalConsent(
+            reviewed_context=reviewed_context,
+            authorized_external_call=authorized_external,
+            accepted_cost_limit=accepted_cost,
         )
-        max_output = controls[2].number_input(
-            "Máximo de salida",
-            min_value=500,
-            max_value=20000,
-            value=8000,
-            step=500,
+        if provider_mode is ProviderMode.EXTERNAL
+        else None
+    )
+
+    preview_request = AssistantRequest(
+        case_id=case_id,
+        issue_id=issue_id,
+        reasoning_run_id=run_id,
+        task=AssistantTask(task_value),
+        instructions=instructions or None,
+        selected_categories=selected_categories,
+        selected_codes=selected_codes,
+        anonymize_parties=(
+            True if provider_mode is ProviderMode.EXTERNAL else anonymize
+        ),
+        max_context_chars=int(max_context),
+        max_output_chars=int(max_output_chars),
+        provider_mode=provider_mode,
+        external_consent=consent,
+        acknowledge_risk_flags=acknowledge_risks,
+        max_input_tokens=max_input_tokens,
+        max_output_tokens=max_output_tokens,
+        max_cost_usd=max_cost_usd,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
+        allow_fallback=allow_fallback,
+    )
+
+    try:
+        preview = assistant_service.preview_context(preview_request)
+    except Exception as exc:
+        st.error(f"No fue posible generar la vista previa: {exc}")
+        return
+
+    if provider_mode is ProviderMode.EXTERNAL:
+        st.markdown("### Vista previa del envío externo")
+        metrics = st.columns(4)
+        metrics[0].metric("Elementos", len(preview.items))
+        metrics[1].metric("Caracteres", preview.char_count)
+        metrics[2].metric(
+            "Tokens estimados",
+            preview.estimated_input_tokens,
         )
-        submitted = st.form_submit_button(
-            "Generar borrador controlado",
-            type="primary",
+        metrics[3].metric(
+            "Costo máximo estimado",
+            f"USD {preview.estimated_max_cost_usd:.6f}",
         )
+        st.caption(
+            "Códigos autorizados: "
+            + ", ".join(item.code for item in preview.items)
+        )
+        if preview.risk_flags:
+            st.warning(
+                "Se detectaron señales de instrucciones incrustadas en el contexto."
+            )
+            for flag in preview.risk_flags:
+                st.write(f"- {flag}")
+            acknowledge_risks = st.checkbox(
+                "Revisé las señales y autorizo tratarlas únicamente como datos",
+                value=False,
+            )
+
+        reviewed_context = st.checkbox(
+            "Confirmo que revisé el contexto y los códigos seleccionados",
+            value=False,
+        )
+        authorized_external = st.checkbox(
+            "Autorizo esta llamada externa específica",
+            value=False,
+        )
+        accepted_cost = st.checkbox(
+            "Acepto el límite de costo mostrado",
+            value=False,
+        )
+        consent = ExternalConsent(
+            reviewed_context=reviewed_context,
+            authorized_external_call=authorized_external,
+            accepted_cost_limit=accepted_cost,
+        )
+
+    request = preview_request.model_copy(
+        update={
+            "external_consent": consent,
+            "acknowledge_risk_flags": acknowledge_risks,
+        }
+    )
+
+    submitted = st.button(
+        "Generar borrador controlado",
+        type="primary",
+        key=f"llm_generate_{case_id}_{issue_id}",
+    )
 
     state_key = f"llm_current_draft_{case_id}_{issue_id}"
     if submitted:
         try:
-            request = AssistantRequest(
-                case_id=case_id,
-                issue_id=issue_id,
-                reasoning_run_id=run_id,
-                task=AssistantTask(task_value),
-                instructions=instructions or None,
-                selected_categories=selected_categories,
-                selected_codes=selected_codes,
-                anonymize_parties=anonymize,
-                max_context_chars=int(max_context),
-                max_output_chars=int(max_output),
-            )
-            preview = assistant_service.preview_context(request)
             record = assistant_service.generate_draft(request)
             st.session_state[state_key] = record.id
             st.success(
                 f"Borrador {record.code} generado. "
                 f"Cobertura de citas: {record.citation_coverage:.0%}."
             )
-            if preview.risk_flags:
+            if record.fallback_used:
                 st.warning(
-                    "Se detectaron señales de instrucciones incrustadas; "
-                    "se trataron únicamente como datos."
+                    "La llamada externa falló y se utilizó el proveedor local."
                 )
         except Exception as exc:
             st.error(f"No fue posible generar el borrador: {exc}")
@@ -195,12 +387,15 @@ def render_llm_assistant(
     if isinstance(draft_id, str):
         _render_current_draft(
             draft_id,
-            case_id=case_id,
-            issue_id=issue_id,
             assistant_service=assistant_service,
         )
 
     _render_history(
+        case_id,
+        issue_id=issue_id,
+        assistant_service=assistant_service,
+    )
+    _render_audit(
         case_id,
         issue_id=issue_id,
         assistant_service=assistant_service,
@@ -210,8 +405,6 @@ def render_llm_assistant(
 def _render_current_draft(
     draft_id: str,
     *,
-    case_id: str,
-    issue_id: str,
     assistant_service: LLMAssistantService,
 ) -> None:
     """Muestra evaluación y controles de revisión del borrador actual."""
@@ -229,9 +422,24 @@ def _render_current_draft(
     metrics[2].metric("Cobertura", f"{record.citation_coverage:.0%}")
     metrics[3].metric("Referencias", len(record.reference_codes))
     st.caption(
+        f"Modo: {record.provider_mode.value} · "
+        f"Proveedor: {record.provider_name} · Modelo: {record.model_name}"
+    )
+    st.caption(
         f"Entrada {record.input_hash[:16]}… · "
         f"salida {record.output_hash[:16]}…"
     )
+    if record.external_call:
+        st.caption(
+            f"Tokens reportados: entrada {record.input_tokens or 0}, "
+            f"salida {record.output_tokens or 0} · "
+            f"Costo estimado: USD {record.estimated_cost_usd or 0.0:.6f}"
+        )
+    if record.fallback_used:
+        st.warning(
+            "Fallback local utilizado. Motivo técnico: "
+            + (record.fallback_reason or "no disponible")
+        )
 
     if record.risk_flags:
         with st.expander("Señales de riesgo detectadas", expanded=True):
@@ -311,7 +519,7 @@ def _render_history(
     issue_id: str,
     assistant_service: LLMAssistantService,
 ) -> None:
-    """Presenta historial de borradores sin mostrar contenido sensible en logs."""
+    """Presenta historial de borradores sin mostrar contenido sensible."""
 
     records = assistant_service.list_drafts(
         case_id,
@@ -328,8 +536,10 @@ def _render_history(
                     "Código": record.code,
                     "Tarea": record.task.value,
                     "Estado": record.status.value,
+                    "Modo": record.provider_mode.value,
                     "Proveedor": record.provider_name,
                     "Modelo": record.model_name,
+                    "Fallback": "Sí" if record.fallback_used else "No",
                     "Cobertura": f"{record.citation_coverage:.0%}",
                     "Creado": record.created_at.isoformat(),
                     "Revisado": (
@@ -339,6 +549,50 @@ def _render_history(
                     ),
                 }
                 for record in records
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+def _render_audit(
+    case_id: str,
+    *,
+    issue_id: str,
+    assistant_service: LLMAssistantService,
+) -> None:
+    """Presenta metadatos de auditoría sin prompts ni secretos."""
+
+    calls = assistant_service.list_provider_calls(
+        case_id,
+        issue_id,
+        limit=30,
+    )
+    with st.expander("Auditoría de proveedores", expanded=False):
+        if not calls:
+            st.caption("Aún no existen llamadas auditadas.")
+            return
+        st.dataframe(
+            [
+                {
+                    "Fecha": call.created_at.isoformat(),
+                    "Modo": call.provider_mode.value,
+                    "Proveedor": call.provider_name,
+                    "Modelo": call.model_name,
+                    "Estado": call.status.value,
+                    "Elementos": len(call.selected_codes),
+                    "Externa": "Sí" if call.external_call else "No",
+                    "Fallback": "Sí" if call.fallback_used else "No",
+                    "Entrada": call.input_tokens or "",
+                    "Salida": call.output_tokens or "",
+                    "Costo USD": (
+                        f"{call.estimated_cost_usd:.6f}"
+                        if call.estimated_cost_usd is not None
+                        else ""
+                    ),
+                    "Error": call.error_code or "",
+                }
+                for call in calls
             ],
             use_container_width=True,
             hide_index=True,
