@@ -43,6 +43,7 @@ class ProviderMode(StrEnum):
 
     SIMULATED = "Simulado local"
     EXTERNAL_TEST = "Prueba externa controlada"
+    OPENAI = "OpenAI Responses API"
     EXTERNAL = "Proveedor externo"
 
 
@@ -126,11 +127,15 @@ class AssistantRequest(AssistantModel):
             raise ValueError("Los códigos seleccionados no pueden repetirse.")
         if (
             self.provider_mode
-            in {ProviderMode.EXTERNAL, ProviderMode.EXTERNAL_TEST}
+            in {
+                ProviderMode.EXTERNAL,
+                ProviderMode.EXTERNAL_TEST,
+                ProviderMode.OPENAI,
+            }
             and not self.anonymize_parties
         ):
             raise ValueError(
-                "Los modos externo y de prueba controlada requieren anonimización de partes."
+                "Los modos externos y de prueba controlada requieren anonimización de partes."
             )
         return self
 

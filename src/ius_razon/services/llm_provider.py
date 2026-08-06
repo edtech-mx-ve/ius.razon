@@ -17,6 +17,7 @@ from ius_razon.domain.llm_models import (
     ProviderResponse,
 )
 from ius_razon.security.llm_external_config import ExternalProviderSettings
+from ius_razon.security.llm_openai_config import OpenAIProviderSettings
 
 
 class LLMProvider(Protocol):
@@ -172,7 +173,7 @@ class ExternalHTTPProvider:
             "Authorization": f"Bearer {self._settings.api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "IUS-Razon/0.6.1",
+            "User-Agent": "IUS-Razon/0.7.0",
         }
 
         last_error: ExternalProviderError | None = None
@@ -250,6 +251,173 @@ class ExternalHTTPProvider:
         if isinstance(value, int) and value >= 0:
             return value
         return None
+
+
+class OpenAIResponsesProvider:
+    """Adaptador específico para OpenAI Responses API mediante HTTPS."""
+
+    def __init__(
+        self,
+        settings: OpenAIProviderSettings,
+        *,
+        transport: JSONTransport | None = None,
+    ) -> None:
+        settings.validate()
+        if not settings.configured:
+            raise ValueError("OpenAI no está habilitado y configurado.")
+        self._settings = settings
+        self._transport = transport or UrllibJSONTransport()
+
+    @property
+    def provider_name(self) -> str:
+        return "OpenAI Responses API"
+
+    @property
+    def model_name(self) -> str:
+        return self._settings.model
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        """Realiza una única llamada sin almacenar el contenido en OpenAI."""
+
+        if request.max_retries != 0:
+            raise ExternalProviderError(
+                "La integración inicial con OpenAI exige cero reintentos.",
+                error_code="retries_not_allowed",
+            )
+        max_output_tokens = min(
+            request.max_output_tokens,
+            self._settings.max_output_tokens,
+        )
+        input_text = self._build_input(request)
+        payload: dict[str, object] = {
+            "model": self.model_name,
+            "instructions": request.system_instruction,
+            "input": input_text,
+            "max_output_tokens": max_output_tokens,
+            "store": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {self._settings.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "IUS-Razon/0.7.0",
+        }
+        response_payload = self._transport.post_json(
+            self._settings.endpoint,
+            headers=headers,
+            payload=payload,
+            timeout_seconds=min(
+                request.timeout_seconds,
+                self._settings.timeout_seconds,
+            ),
+        )
+        text = self._extract_output_text(response_payload)
+        if len(text) > request.max_output_chars:
+            text = text[: request.max_output_chars].rstrip()
+
+        usage = response_payload.get("usage")
+        usage_mapping = (
+            cast(dict[str, object], usage)
+            if isinstance(usage, dict)
+            else {}
+        )
+        input_tokens = ExternalHTTPProvider._optional_nonnegative_int(
+            usage_mapping.get("input_tokens")
+        )
+        output_tokens = ExternalHTTPProvider._optional_nonnegative_int(
+            usage_mapping.get("output_tokens")
+        )
+        estimated_cost = self._settings.estimate_cost(
+            input_tokens or 0,
+            output_tokens or 0,
+        )
+        cost_limit = min(
+            request.max_cost_usd,
+            self._settings.max_cost_usd,
+        )
+        if estimated_cost > cost_limit:
+            raise ExternalProviderError(
+                "El costo reportado supera el presupuesto autorizado.",
+                error_code="reported_cost_limit_exceeded",
+            )
+        request_id_value = response_payload.get("id")
+        request_id = (
+            str(request_id_value)[:240]
+            if request_id_value is not None
+            else None
+        )
+        return ProviderResponse(
+            text=text,
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            request_id=request_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost_usd=estimated_cost,
+            external_call=True,
+        )
+
+    @staticmethod
+    def _build_input(request: ProviderRequest) -> str:
+        context = [
+            {
+                "code": item.code,
+                "category": item.category.value,
+                "title": item.title,
+                "content": item.content,
+            }
+            for item in request.context_items
+        ]
+        payload = {
+            "task": request.task.value,
+            "user_instruction": request.instructions,
+            "allowed_codes": list(request.allowed_codes),
+            "context": context,
+            "output_requirements": {
+                "language": "es",
+                "format": "markdown",
+                "citations": "Use only bracketed allowed codes.",
+                "human_review": "Mandatory.",
+            },
+        }
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def _extract_output_text(
+        cls,
+        payload: Mapping[str, object],
+    ) -> str:
+        direct = payload.get("output_text")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+
+        output = payload.get("output")
+        fragments: list[str] = []
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "output_text":
+                        continue
+                    value = block.get("text")
+                    if isinstance(value, str) and value.strip():
+                        fragments.append(value.strip())
+        if fragments:
+            return "\n".join(fragments)
+        raise ExternalProviderError(
+            "OpenAI no devolvió texto utilizable.",
+            error_code="missing_output_text",
+        )
 
 
 class DeterministicMockProvider:
