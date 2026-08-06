@@ -75,3 +75,30 @@ git check-ignore -v .\data\ius_razon_demo.db
 La base debe aparecer como ignorada y nunca como archivo preparado para commit. La salida JSON
 del generador solo muestra el nombre del archivo, el título sintético y los conteos; no muestra la
 ruta absoluta del sistema.
+
+## Modo público de demostración
+
+El despliegue público debe activar la creación automática de datos sintéticos mediante:
+
+```text
+IUS_RAZON_DEMO_MODE=true
+```
+
+Comportamiento esperado:
+
+- sin la variable, la aplicación conserva la persistencia local habitual;
+- con la variable, usa `data/ius_razon_demo.db`;
+- si la base demo no existe o no contiene expedientes, se reconstruye de forma segura;
+- el archivo `.ius_razon_persistence.json` local no se lee ni se sobrescribe;
+- puede definirse otra ruta relativa con `IUS_RAZON_DEMO_DB_PATH`.
+
+Validación local del modo público:
+
+```powershell
+$env:IUS_RAZON_DEMO_MODE = "true"
+streamlit run .\app.py
+Remove-Item Env:\IUS_RAZON_DEMO_MODE
+```
+
+La aplicación debe iniciar con el expediente sintético y no debe modificar la ubicación de la
+base privada usada en el modo local.
