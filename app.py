@@ -58,12 +58,16 @@ from ius_razon.persistence.argumentation_repository import (
     ArgumentationRepository,
 )
 from ius_razon.persistence.backup import create_database_backup
+from ius_razon.persistence.llm_repository import LLMRepository
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.services.argumentation_service import ArgumentationService
 from ius_razon.services.case_service import CaseService
 from ius_razon.services.legal_report_service import LegalReportService
+from ius_razon.services.llm_assistant_service import LLMAssistantService
+from ius_razon.services.llm_provider import DeterministicMockProvider
 from ius_razon.services.reasoning_service import ReasoningService
+from ius_razon.ui.llm_assistant_view import render_llm_assistant
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -81,6 +85,7 @@ def build_services() -> tuple[
     ReasoningService,
     ArgumentationService,
     LegalReportService,
+    LLMAssistantService,
     AppConfig,
     Path | None,
 ]:
@@ -98,6 +103,8 @@ def build_services() -> tuple[
     reasoning_repository.initialize()
     argumentation_repository = ArgumentationRepository(config.db_path)
     argumentation_repository.initialize()
+    llm_repository = LLMRepository(config.db_path)
+    llm_repository.initialize()
     case_service = CaseService(repository=repository, config=config)
     reasoning = ReasoningService(
         repository=reasoning_repository,
@@ -112,11 +119,20 @@ def build_services() -> tuple[
         reasoning_service=reasoning,
         argumentation_service=argumentation,
     )
+    llm_assistant = LLMAssistantService(
+        case_service=case_service,
+        reasoning_service=reasoning,
+        argumentation_service=argumentation,
+        provider=DeterministicMockProvider(),
+        repository=llm_repository,
+        backup_dir=config.data_dir / "backups",
+    )
     return (
         case_service,
         reasoning,
         argumentation,
         report_service,
+        llm_assistant,
         config,
         backup_path,
     )
@@ -127,6 +143,7 @@ def build_services() -> tuple[
     reasoning_service,
     argumentation_service,
     legal_report_service,
+    llm_assistant_service,
     app_config,
     startup_backup,
 ) = build_services()
@@ -3249,7 +3266,7 @@ def render_integral_report(case_id: str) -> None:
 
 def main() -> None:
     st.title("⚖️ IUS-Razón")
-    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 4.2.1 v0.4.4")
+    st.caption("Sistema de Análisis, Argumentación y Estrategia Jurídica · Sprint 4.3 v0.5.0")
     render_notice()
 
     with st.sidebar:
@@ -3272,10 +3289,10 @@ def main() -> None:
             """
             ### Comienza creando un expediente
 
-            Sprint 4.2 incorpora un informe jurídico integral con resumen
-            ejecutivo, inferencia, argumentación, comparación narrativa de
-            escenarios, limitaciones, trazabilidad y exportación JSON,
-            Markdown y DOCX.
+            Sprint 4.3 incorpora un asistente IA controlado en modo
+            simulado local, con selección explícita de contexto, anonimización,
+            referencias internas, detección de afirmaciones sin respaldo y
+            revisión humana obligatoria.
             """
         )
         return
@@ -3297,6 +3314,7 @@ def main() -> None:
             "Inferencia",
             "Argumentación",
             "Informe integral",
+            "Asistente IA",
             "Gestión razonamiento",
             "Corrección segura",
         ]
@@ -3332,8 +3350,15 @@ def main() -> None:
     with tabs[14]:
         render_integral_report(selected_case_id)
     with tabs[15]:
-        render_reasoning_management(selected_case_id)
+        render_llm_assistant(
+            selected_case_id,
+            case_service=service,
+            reasoning_service=reasoning_service,
+            assistant_service=llm_assistant_service,
+        )
     with tabs[16]:
+        render_reasoning_management(selected_case_id)
+    with tabs[17]:
         render_safe_correction(selected_case_id)
 
 

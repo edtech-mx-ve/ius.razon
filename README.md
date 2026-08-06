@@ -1,123 +1,128 @@
-# IUS-Razón — Sprint 4.2.1 (v0.4.4)
+# IUS-Razón — Sprint 4.3 (v0.5.0)
 
 Prototipo local para estructurar expedientes jurídicos, ejecutar razonamiento
-simbólico, construir redes argumentales y generar un informe jurídico integral
-trazable sobre controversias contractuales civiles y mercantiles.
+simbólico, construir redes argumentales, generar informes trazables y preparar
+borradores asistivos bajo control humano.
 
-El motor de inferencia permanece en la versión 3.2.0. Sprint 4.2.1 pule la
-capa de reporte integral: distingue argumentos manuales, mejora concordancia,
-normaliza puntuación y conserva la reproducibilidad sin cambiar el motor.
+El motor determinista permanece en la versión 3.2.0. Sprint 4.3 incorpora un
+asistente desacoplado con proveedor simulado local, selección explícita de
+contexto, anonimización, referencias internas, evaluación de respaldo y flujo
+de aprobación o rechazo.
 
 > Uso experimental y académico. No constituye asesoría jurídica, dictamen,
 > predicción judicial ni verificación automática de vigencia, autenticidad,
 > obligatoriedad o aplicabilidad de fuentes.
 
-## Funciones principales
+## Incremento Sprint 4.3
 
-- expedientes, partes, hechos, pruebas y vínculos probatorios;
-- problemas jurídicos, normas, jurisprudencia, doctrina y matriz de fuentes;
-- premisas, reglas, excepciones, prioridad, derrota, empate y trazas;
-- argumentos favorables, adversos y neutrales;
-- relaciones `Apoya`, `Ataca` y `Responde`;
-- grafos argumentales y escenarios `SCN-###`;
-- comparación estructural entre escenarios;
-- informe jurídico integral con:
-  - identificación y alcance;
-  - resumen ejecutivo automático o redactado por el analista;
-  - antecedentes, hechos y pruebas;
-  - fuentes jurídicas vinculadas;
-  - inferencia y traza de reglas;
-  - argumentación y relaciones;
-  - comparación narrativa de escenarios;
-  - hallazgos, limitaciones y recomendaciones;
-  - matriz de trazabilidad;
-  - huellas SHA-256 para reproducibilidad;
-- exportación integral a JSON, Markdown y DOCX;
-- encabezado, pie de página, índice estático y numeración de páginas en DOCX;
-- origen explícito de argumentos manuales y derivados del motor;
-- concordancia singular/plural y puntuación normalizada en hallazgos;
-- validación para impedir mezclar ejecuciones o escenarios de otros problemas.
+La pestaña `Asistente IA` permite:
 
-## Informe jurídico integral
+- seleccionar el problema jurídico y una ejecución de inferencia;
+- elegir categorías y elementos exactos del expediente;
+- anonimizar alias de partes antes de construir el contexto;
+- limitar el tamaño de contexto y de salida;
+- generar cinco clases de borrador:
+  - resumen del expediente;
+  - argumento;
+  - explicación de conclusión;
+  - información faltante;
+  - sección de informe;
+- conservar referencias como `[H-001]`, `[P-001]`, `[N-001]`, `[C-001]`
+  y `[ARG-001]`;
+- detectar referencias no permitidas y afirmaciones sin cita;
+- detectar señales heurísticas de instrucciones incrustadas;
+- editar el texto antes de aprobarlo;
+- aprobar o rechazar sin sobrescribir el texto original;
+- guardar huellas SHA-256, proveedor, modelo, contexto y decisión humana.
 
-La pestaña `Informe integral` permite seleccionar:
+## Seguridad y privacidad
+
+La versión 0.5.0 funciona exclusivamente con:
 
 ```text
-problema jurídico
-ejecución de inferencia
-escenario base
-escenario comparado
-título
-objeto y alcance
-resumen ejecutivo opcional
-conclusiones del analista
-recomendaciones
-limitaciones adicionales
+Proveedor: Simulado local
+Modelo: ius-razon-mock-v1
+Llamadas externas: ninguna
+Clave API: no requerida ni aceptada
 ```
 
-El reporte no inventa hechos ni consulta fuentes externas. Solo organiza los
-datos persistidos en la base SQLite activa.
+El sistema no envía datos por red. Los logs registran identificadores,
+proveedor, modelo y huellas, pero no registran el texto del expediente ni el
+borrador. La anonimización es opcional y está activada por defecto.
 
-## Reproducibilidad
+Las instrucciones encontradas dentro de hechos, pruebas o fuentes se tratan
+como datos. La detección es heurística y no reemplaza la revisión humana.
 
-Cada informe incluye:
-
-```text
-huella del informe
-huella de la ejecución de inferencia
-huella del grafo base
-huella del grafo comparado
-fecha de la instantánea
-versión del reporte
-```
-
-El hash se calcula a partir del contenido de entrada y no de la hora de descarga.
-
-## Compatibilidad
-
-Sprint 4.2.1 no modifica el esquema SQLite. Conserva:
-
-```text
-expedientes
-partes
-hechos
-pruebas
-fuentes
-premisas
-reglas
-ejecuciones
-conclusiones
-argumentos
-relaciones
-escenarios
-```
-
-## Estructura relevante
+## Arquitectura
 
 ```text
 app.py
 src/ius_razon/
 ├── domain/
-│   ├── argumentation_models.py
-│   └── report_models.py
-└── services/
-    ├── argumentation_service.py
-    └── legal_report_service.py
+│   └── llm_models.py
+├── persistence/
+│   └── llm_repository.py
+├── security/
+│   └── llm_guardrails.py
+├── services/
+│   ├── llm_assistant_service.py
+│   └── llm_provider.py
+└── ui/
+    └── llm_assistant_view.py
 tests/
-├── test_sprint_4.py
-├── test_sprint_41.py
-└── test_sprint_42.py
+└── test_sprint_43.py
+```
+
+Responsabilidades:
+
+- `llm_models.py`: contratos tipados y estados.
+- `llm_guardrails.py`: transformaciones puras de saneamiento, anonimización,
+  límites, huellas y evaluación de citas.
+- `llm_provider.py`: protocolo intercambiable y proveedor simulado.
+- `llm_repository.py`: persistencia aditiva de borradores y revisiones.
+- `llm_assistant_service.py`: orquestación, validación y logging seguro.
+- `llm_assistant_view.py`: flujo Streamlit de generación y revisión.
+
+## Persistencia
+
+La inicialización crea, si no existen:
+
+```text
+llm_draft_sequences
+llm_drafts
+```
+
+La migración es aditiva. No elimina ni modifica expedientes, hechos, pruebas,
+fuentes, reglas, inferencias, argumentos, escenarios o informes.
+
+Cada registro `IA-###` conserva:
+
+```text
+solicitud
+contexto seleccionado
+texto original
+texto aprobado, cuando exista
+referencias
+afirmaciones sin respaldo
+señales de riesgo
+cobertura de citas
+huellas de entrada y salida
+estado de revisión
+fecha de creación y revisión
 ```
 
 ## Implementación
 
 Detén Streamlit presionando físicamente `Ctrl + C`.
 
-Respalda la base:
+Respalda la base activa:
 
 ```powershell
 Get-ChildItem . -Filter "*.db" -Recurse | ForEach-Object {
-    Copy-Item $_.FullName "$($_.FullName).pre-sprint421.bak" -Force
+    Copy-Item `
+        $_.FullName `
+        "$($_.FullName).pre-sprint43.bak" `
+        -Force
 }
 ```
 
@@ -125,21 +130,33 @@ Aplica el parche:
 
 ```powershell
 Expand-Archive `
-    .\IUS_Razon_Sprint_4_2_1_patch_v0.4.4.zip `
+    .\IUS_Razon_Sprint_4_3_patch_v0.5.0.zip `
     -DestinationPath . `
     -Force
 ```
 
-Reinstala:
+Reinstala únicamente el proyecto editable:
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install `
+    -e . `
+    --no-deps `
+    --no-cache-dir `
+    --force-reinstall
 ```
 
-Comprueba versión:
+Comprueba la versión:
 
 ```powershell
-python -c "from importlib.metadata import version; import ius_razon; print(version('ius-razon')); print(ius_razon.__version__); print(ius_razon.__file__)"
+python -c "from importlib.metadata import version; import ius_razon; print('Instalada:', version('ius-razon')); print('Módulo:', ius_razon.__version__); print('Ruta:', ius_razon.__file__)"
+```
+
+Resultado esperado:
+
+```text
+Instalada: 0.5.0
+Módulo: 0.5.0
+Ruta: ...\src\ius_razon\__init__.py
 ```
 
 Valida:
@@ -155,16 +172,16 @@ Resultado esperado:
 ```text
 All checks passed!
 Success: no issues found
-66 passed
+82 passed
 ```
 
-Inicia:
+Inicia la interfaz:
 
 ```powershell
 streamlit run app.py
 ```
 
-Abre:
+URL esperada:
 
 ```text
 http://localhost:8501
@@ -172,20 +189,50 @@ http://localhost:8501
 
 ## Prueba funcional mínima
 
-1. Deja activa la regla principal y selecciona una ejecución válida.
-2. Abre `Informe integral`.
-3. Selecciona `SCN-001` como escenario base.
-4. Selecciona `SCN-002` como escenario comparado.
-5. Genera el informe.
-6. Verifica que la comparación mencione `ARG-003`, `REL-002` y la reducción
-   de objeciones pendientes.
-7. Descarga JSON, Markdown y DOCX.
-8. Abre el DOCX y revisa índice, tablas, numeración, trazabilidad y huellas.
+1. Abre `Asistente IA`.
+2. Selecciona `PJ-001`.
+3. Selecciona la ejecución `3385ccd1`.
+4. Conserva todas las categorías disponibles.
+5. Conserva todos los elementos seleccionados.
+6. Elige `Resumen del expediente`.
+7. Mantén activada `Anonimizar partes`.
+8. Pulsa `Generar borrador controlado`.
+9. Verifica:
+   - código `IA-###`;
+   - estado `Generado`;
+   - cobertura de citas `100 %`;
+   - ausencia de referencias no permitidas;
+   - alias reemplazados por `PARTE-###`.
+10. Revisa el texto y pulsa `Aprobar versión revisada`.
+11. Confirma que el estado cambie a `Aprobado`.
+12. Revisa el registro en `Historial asistivo`.
+
+## Criterios de aceptación
+
+- el proveedor no modifica entidades jurídicas;
+- el contexto se selecciona explícitamente;
+- las respuestas usan solo códigos permitidos;
+- las afirmaciones sin cita se detectan;
+- la aprobación exige trazabilidad completa;
+- el texto original se preserva;
+- las partes pueden anonimizarse;
+- no existen llamadas externas ni secretos;
+- la migración SQLite es aditiva;
+- las pruebas anteriores continúan aprobadas.
 
 ## Limitaciones
 
-- El reporte no verifica la verdad ni suficiencia jurídica de sus entradas.
-- La comparación de escenarios es estructural, no predictiva.
-- Las conclusiones del analista son texto registrado por el usuario.
-- No hay firma electrónica, colaboración multiusuario ni publicación web.
-- La revisión humana continúa siendo obligatoria.
+- el proveedor simulado no realiza razonamiento generativo real;
+- la detección de inyección y de afirmaciones sin soporte es heurística;
+- la cobertura de citas mide forma de trazabilidad, no verdad jurídica;
+- la anonimización sustituye alias registrados, no entidades no registradas;
+- no existe todavía conexión con un proveedor remoto o modelo local real;
+- los borradores aprobados no se incorporan automáticamente al informe
+  jurídico integral.
+
+## Próximo incremento
+
+Sprint 4.3.1 conectará un proveedor real opcional mediante variables de
+entorno, consentimiento explícito, vista previa exacta del contexto, control
+de tiempo y costo, reintentos limitados y pruebas contractuales. El modo
+simulado seguirá disponible para desarrollo y pruebas.
