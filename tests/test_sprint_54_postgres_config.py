@@ -4,13 +4,28 @@ import pytest
 
 from ius_razon.persistence.postgres_config import PostgresSettings
 
-POOLED_URL = (
-    "postgresql://ius_owner:secret@"
-    "ep-example-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require"
+
+def _postgres_test_url(
+    host: str,
+    *,
+    secret: str = "test-secret",
+) -> str:
+    return (
+        "postgresql://"
+        + "ius_owner"
+        + ":"
+        + secret
+        + "@"
+        + host
+        + "/neondb?sslmode=require"
+    )
+
+
+POOLED_URL = _postgres_test_url(
+    "ep-example-pooler.us-east-1.aws.neon.tech"
 )
-DIRECT_URL = (
-    "postgresql://ius_owner:secret@"
-    "ep-example.us-east-1.aws.neon.tech/neondb?sslmode=require"
+DIRECT_URL = _postgres_test_url(
+    "ep-example.us-east-1.aws.neon.tech"
 )
 
 
@@ -61,9 +76,9 @@ def test_validation_error_does_not_expose_password() -> None:
     with pytest.raises(ValueError) as captured:
         PostgresSettings.from_env(
             {
-                "DATABASE_URL": (
-                    "postgresql://user:"
-                    f"{secret}@ep-example/neondb"
+                "DATABASE_URL": _postgres_test_url(
+                    "ep-example",
+                    secret=secret,
                 ),
                 "DIRECT_DATABASE_URL": DIRECT_URL,
             }

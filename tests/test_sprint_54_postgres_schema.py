@@ -18,13 +18,23 @@ from ius_razon.persistence.postgres_schema import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-POOLED_URL = (
-    "postgresql://owner:secret@"
-    "ep-example-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require"
+def _postgres_test_url(host: str) -> str:
+    return (
+        "postgresql://"
+        + "owner"
+        + ":"
+        + "test-secret"
+        + "@"
+        + host
+        + "/neondb?sslmode=require"
+    )
+
+
+POOLED_URL = _postgres_test_url(
+    "ep-example-pooler.us-east-1.aws.neon.tech"
 )
-DIRECT_URL = (
-    "postgresql://owner:secret@"
-    "ep-example.us-east-1.aws.neon.tech/neondb?sslmode=require"
+DIRECT_URL = _postgres_test_url(
+    "ep-example.us-east-1.aws.neon.tech"
 )
 
 

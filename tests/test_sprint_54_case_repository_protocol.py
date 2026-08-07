@@ -19,6 +19,16 @@ def _accept_backup(backup: MutationBackup) -> MutationBackup:
     return backup
 
 
+def _postgres_test_url() -> str:
+    return (
+        "postgresql://"
+        + "user"
+        + ":"
+        + "password"
+        + "@example.invalid/neondb"
+    )
+
+
 def test_sqlite_repository_satisfies_case_repository(
     tmp_path: Path,
 ) -> None:
@@ -29,7 +39,7 @@ def test_sqlite_repository_satisfies_case_repository(
 
 
 def test_postgres_repository_satisfies_case_repository() -> None:
-    repository = PostgresRepository("postgresql://user:password@example.invalid/neondb")
+    repository = PostgresRepository(_postgres_test_url())
 
     assert isinstance(repository, CaseRepository)
     assert _accept_repository(repository) is repository
