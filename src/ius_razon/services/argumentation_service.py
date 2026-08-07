@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import logging
-from pathlib import Path
 
 from docx import Document
 
@@ -29,10 +28,10 @@ from ius_razon.domain.argumentation_models import (
     ScenarioComparison,
 )
 from ius_razon.domain.reasoning_models import AssertionValue
-from ius_razon.persistence.argumentation_repository import (
-    ArgumentationRepository,
+from ius_razon.persistence.argumentation_repository_protocol import (
+    ArgumentationRepositoryProtocol,
 )
-from ius_razon.persistence.backup import create_database_backup
+from ius_razon.persistence.mutation_backup import MutationBackup
 
 LOGGER = logging.getLogger(__name__)
 
@@ -122,12 +121,12 @@ class ArgumentationService:
 
     def __init__(
         self,
-        repository: ArgumentationRepository,
+        repository: ArgumentationRepositoryProtocol,
         *,
-        backup_dir: Path | None = None,
+        mutation_backup: MutationBackup,
     ) -> None:
         self._repository = repository
-        self._backup_dir = backup_dir
+        self._mutation_backup = mutation_backup
 
     def list_conclusion_contexts(
         self,
@@ -1177,16 +1176,10 @@ class ArgumentationService:
             )
 
     def _backup_before_mutation(self, operation: str) -> None:
-        if self._backup_dir is None:
-            return
-        backup_path = create_database_backup(
-            self._repository.db_path,
-            self._backup_dir,
-        )
+        self._mutation_backup.before_mutation()
         LOGGER.info(
-            "Respaldo previo a %s: %s",
+            "Política de respaldo previo completada. operation=%s",
             operation,
-            backup_path,
         )
 
     @staticmethod

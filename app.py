@@ -55,13 +55,10 @@ from ius_razon.domain.reasoning_models import (
 )
 from ius_razon.domain.report_models import IntegralReportRequest
 from ius_razon.logging_config import configure_logging
-from ius_razon.persistence.argumentation_repository import (
-    ArgumentationRepository,
+from ius_razon.persistence.factory import build_persistence_bundle
+from ius_razon.persistence.postgres_runtime import (
+    load_persistence_settings,
 )
-from ius_razon.persistence.backup import create_database_backup
-from ius_razon.persistence.llm_repository import LLMRepository
-from ius_razon.persistence.reasoning_repository import ReasoningRepository
-from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
 from ius_razon.security.llm_ollama_config import (
     OllamaProviderConfigurationError,
@@ -82,6 +79,7 @@ from ius_razon.services.privacy_service import PrivacyService
 from ius_razon.services.reasoning_service import ReasoningService
 from ius_razon.ui.app_shell import (
     render_accessibility_foundation,
+    render_app_footer,
     render_app_header,
     render_section_context,
     render_sidebar_navigation,
@@ -116,26 +114,28 @@ def build_services() -> tuple[
 
     config = AppConfig.from_env(PROJECT_ROOT)
     configure_logging(config)
-    backup_path = create_database_backup(
-        config.db_path,
-        config.data_dir / "backups",
+    persistence_settings = load_persistence_settings(PROJECT_ROOT)
+    persistence = build_persistence_bundle(
+        config=config,
+        settings=persistence_settings,
     )
-    repository = SQLiteRepository(config.db_path)
-    repository.initialize()
-    reasoning_repository = ReasoningRepository(config.db_path)
-    reasoning_repository.initialize()
-    argumentation_repository = ArgumentationRepository(config.db_path)
-    argumentation_repository.initialize()
-    llm_repository = LLMRepository(config.db_path)
-    llm_repository.initialize()
-    case_service = CaseService(repository=repository, config=config)
+    backup_path = persistence.startup_backup
+    repository = persistence.case_repository
+    reasoning_repository = persistence.reasoning_repository
+    argumentation_repository = persistence.argumentation_repository
+    llm_repository = persistence.llm_repository
+    case_service = CaseService(
+        repository=repository,
+        config=config,
+        mutation_backup=persistence.mutation_backup,
+    )
     reasoning = ReasoningService(
         repository=reasoning_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=persistence.mutation_backup,
     )
     argumentation = ArgumentationService(
         repository=argumentation_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=persistence.mutation_backup,
     )
     report_service = LegalReportService(
         case_service=case_service,
@@ -171,7 +171,7 @@ def build_services() -> tuple[
         ollama_configuration_error=ollama_error,
         ollama_health_probe=ollama_health_probe,
         repository=llm_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=persistence.mutation_backup,
     )
     privacy_settings = PrivacySettings.from_env()
     privacy_service = PrivacyService(
@@ -3419,7 +3419,9 @@ def main() -> None:
     render_accessibility_foundation()
     render_app_header(
         version="0.8.1",
+        sprint="5.4",
         public_demo=privacy_settings.public_demo,
+        project_root=PROJECT_ROOT,
     )
     render_notice()
 
@@ -3468,6 +3470,7 @@ def main() -> None:
             y carga de una sola vista por interacción.
             """
         )
+        render_app_footer(project_root=PROJECT_ROOT)
         return
 
     if selected_navigation is None:
@@ -3480,6 +3483,7 @@ def main() -> None:
         selected_navigation.page_id,
         selected_case_id,
     )
+    render_app_footer(project_root=PROJECT_ROOT)
 
 
 if __name__ == "__main__":

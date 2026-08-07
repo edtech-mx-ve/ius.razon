@@ -34,6 +34,7 @@ from ius_razon.persistence.argumentation_repository import (
     ArgumentationConflictError,
     ArgumentationRepository,
 )
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.services.argumentation_service import ArgumentationService
@@ -63,14 +64,30 @@ def build_services(
     argumentation_repository = ArgumentationRepository(config.db_path)
     argumentation_repository.initialize()
     return (
-        CaseService(case_repository, config),
+        CaseService(
+            case_repository,
+            config,
+            mutation_backup=SQLiteMutationBackup(
+                config.db_path,
+                config.data_dir / "backups",
+                keep=20,
+            ),
+        ),
         ReasoningService(
             reasoning_repository,
-            backup_dir=data_dir / "backups",
+            mutation_backup=SQLiteMutationBackup(
+                reasoning_repository.db_path,
+                data_dir / "backups",
+                keep=20,
+            ),
         ),
         ArgumentationService(
             argumentation_repository,
-            backup_dir=data_dir / "backups",
+            mutation_backup=SQLiteMutationBackup(
+                argumentation_repository.db_path,
+                data_dir / "backups",
+                keep=20,
+            ),
         ),
     )
 

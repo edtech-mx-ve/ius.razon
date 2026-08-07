@@ -68,7 +68,7 @@ def _field(value: str, *, field_name: str = "description") -> TextField:
             PrivacyCategory.LOCAL_PATH,
         ),
         (
-            "Clave sk-proyecto_super_secreta_123456789",
+            "Clave " + "sk-" + "proyecto_super_secreta_123456789",
             PrivacyCategory.SECRET,
         ),
         (

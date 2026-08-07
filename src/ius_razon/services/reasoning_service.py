@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from pathlib import Path
 
 from ius_razon.domain.reasoning_models import (
     ReasoningAssertionCreate,
@@ -16,8 +15,10 @@ from ius_razon.domain.reasoning_models import (
     ReasoningRunReport,
     ReasoningVersionRecord,
 )
-from ius_razon.persistence.backup import create_database_backup
-from ius_razon.persistence.reasoning_repository import ReasoningRepository
+from ius_razon.persistence.mutation_backup import MutationBackup
+from ius_razon.persistence.reasoning_repository_protocol import (
+    ReasoningRepositoryProtocol,
+)
 from ius_razon.services.reasoning_engine import ReasoningEngine
 
 LOGGER = logging.getLogger(__name__)
@@ -28,13 +29,14 @@ class ReasoningService:
 
     def __init__(
         self,
-        repository: ReasoningRepository,
+        repository: ReasoningRepositoryProtocol,
         engine: ReasoningEngine | None = None,
-        backup_dir: Path | None = None,
+        *,
+        mutation_backup: MutationBackup,
     ) -> None:
         self._repository = repository
         self._engine = engine or ReasoningEngine()
-        self._backup_dir = backup_dir
+        self._mutation_backup = mutation_backup
 
     def add_assertion(
         self,
@@ -429,28 +431,12 @@ class ReasoningService:
                 f"{', '.join(missing)}"
             )
 
-    def _backup_before_mutation(self, operation: str) -> Path | None:
-        if self._backup_dir is None:
-            return None
-        backup = create_database_backup(
-            self._repository.db_path,
-            self._backup_dir,
+    def _backup_before_mutation(self, operation: str) -> None:
+        self._mutation_backup.before_mutation()
+        LOGGER.info(
+            "Política de respaldo previo completada. operation=%s",
+            operation,
         )
-        if (
-            self._repository.db_path.is_file()
-            and self._repository.db_path.stat().st_size > 0
-            and backup is None
-        ):
-            raise RuntimeError(
-                f"No se creó el respaldo requerido antes de {operation}."
-            )
-        if backup is not None:
-            LOGGER.info(
-                "Respaldo previo a mutación. operation=%s path=%s",
-                operation,
-                backup,
-            )
-        return backup
 
     @staticmethod
     def _input_payload(

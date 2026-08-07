@@ -25,6 +25,7 @@ from ius_razon.domain.reasoning_models import (
     RuleConditionCreate,
     RuleKind,
 )
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.reasoning_repository import (
     ReasoningConflictError,
     ReasoningRepository,
@@ -52,10 +53,22 @@ def build_services(tmp_path: Path) -> tuple[CaseService, ReasoningService, AppCo
     reasoning_repository = ReasoningRepository(config.db_path)
     reasoning_repository.initialize()
     return (
-        CaseService(case_repository, config),
+        CaseService(
+            case_repository,
+            config,
+            mutation_backup=SQLiteMutationBackup(
+                config.db_path,
+                config.data_dir / "backups",
+                keep=20,
+            ),
+        ),
         ReasoningService(
             reasoning_repository,
-            backup_dir=config.data_dir / "backups",
+            mutation_backup=SQLiteMutationBackup(
+                reasoning_repository.db_path,
+                config.data_dir / "backups",
+                keep=20,
+            ),
         ),
         config,
     )
@@ -309,7 +322,15 @@ def test_additive_migration_preserves_old_run_and_adds_snapshot(
     config.log_dir.mkdir(parents=True)
     case_repository = SQLiteRepository(db_path)
     case_repository.initialize()
-    case_service = CaseService(case_repository, config)
+    case_service = CaseService(
+        case_repository,
+        config,
+        mutation_backup=SQLiteMutationBackup(
+            config.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
+    )
     case_id, issue_id = create_case_issue(case_service)
 
     with sqlite3.connect(db_path) as connection:

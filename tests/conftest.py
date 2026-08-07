@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ius_razon.config import AppConfig
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.services.case_service import CaseService
 
@@ -25,4 +26,12 @@ def service(tmp_path: Path) -> CaseService:
     config.log_dir.mkdir(parents=True)
     repository = SQLiteRepository(config.db_path)
     repository.initialize()
-    return CaseService(repository=repository, config=config)
+    return CaseService(
+        repository=repository,
+        config=config,
+        mutation_backup=SQLiteMutationBackup(
+            config.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
+    )
