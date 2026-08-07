@@ -73,6 +73,16 @@ class CaseService:
             issue_source_link_count=self._repository.count_issue_source_links(case_id),
         )
 
+    def update_case(
+        self,
+        case_id: str,
+        payload: CaseCreate,
+    ) -> CaseRecord:
+        self._backup_before_mutation()
+        record = self._repository.update_case(case_id, payload)
+        LOGGER.info("Expediente actualizado. case_id=%s", case_id)
+        return record
+
     def add_party(self, payload: PartyCreate) -> PartyRecord:
         record = self._repository.add_party(payload)
         LOGGER.info("Parte agregada. case_id=%s party_id=%s", payload.case_id, record.id)
