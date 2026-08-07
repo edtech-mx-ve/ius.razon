@@ -106,7 +106,11 @@ def build_services(
     )
     argumentation_service = ArgumentationService(
         argumentation_repository,
-        backup_dir=data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            argumentation_repository.db_path,
+            data_dir / "backups",
+            keep=20,
+        ),
     )
     return (
         case_service,

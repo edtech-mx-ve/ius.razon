@@ -152,7 +152,11 @@ def build_services() -> tuple[
     )
     argumentation = ArgumentationService(
         repository=argumentation_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            argumentation_repository.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
     )
     report_service = LegalReportService(
         case_service=case_service,

@@ -125,7 +125,11 @@ def build_assistant(
     )
     argumentation_service = ArgumentationService(
         argumentation_repository,
-        backup_dir=data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            argumentation_repository.db_path,
+            data_dir / "backups",
+            keep=20,
+        ),
     )
     assistant = LLMAssistantService(
         case_service=case_service,

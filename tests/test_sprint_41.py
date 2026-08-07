@@ -66,7 +66,11 @@ def build_services(tmp_path: Path) -> tuple[CaseService, ArgumentationService]:
         ),
         ArgumentationService(
             argumentation_repository,
-            backup_dir=data_dir / "backups",
+            mutation_backup=SQLiteMutationBackup(
+                argumentation_repository.db_path,
+                data_dir / "backups",
+                keep=20,
+            ),
         ),
     )
 
