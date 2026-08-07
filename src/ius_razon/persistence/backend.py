@@ -15,9 +15,13 @@ class PersistenceBackend(StrEnum):
     POSTGRES = "postgres"
 
 
+class BackendActivationError(RuntimeError):
+    """Impide activar un backend incompleto de forma silenciosa."""
+
+
 @dataclass(frozen=True, slots=True)
 class PersistenceSettings:
-    """Selecciona backend sin reemplazar todavía los repositorios."""
+    """Selecciona y valida el backend solicitado."""
 
     backend: PersistenceBackend
 
@@ -48,3 +52,16 @@ class PersistenceSettings:
     @property
     def uses_postgres(self) -> bool:
         return self.backend is PersistenceBackend.POSTGRES
+
+    def require_runtime_supported(self) -> None:
+        """Bloquea PostgreSQL hasta que todas las capas usen el mismo motor."""
+
+        if not self.uses_postgres:
+            return
+
+        raise BackendActivationError(
+            "PostgreSQL fue solicitado, pero la activación completa todavía "
+            "está bloqueada. CaseRepository ya dispone de PostgreSQL, mientras "
+            "que razonamiento, argumentación y LLM continúan usando SQLite. "
+            "IUS-Razón no permite un backend mixto."
+        )

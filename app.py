@@ -58,6 +58,7 @@ from ius_razon.logging_config import configure_logging
 from ius_razon.persistence.argumentation_repository import (
     ArgumentationRepository,
 )
+from ius_razon.persistence.backend import PersistenceSettings
 from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
 from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
@@ -118,6 +119,8 @@ def build_services() -> tuple[
 
     config = AppConfig.from_env(PROJECT_ROOT)
     configure_logging(config)
+    persistence_settings = PersistenceSettings.from_env()
+    persistence_settings.require_runtime_supported()
     backup_path = create_database_backup(
         config.db_path,
         config.data_dir / "backups",
