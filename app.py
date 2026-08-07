@@ -55,15 +55,8 @@ from ius_razon.domain.reasoning_models import (
 )
 from ius_razon.domain.report_models import IntegralReportRequest
 from ius_razon.logging_config import configure_logging
-from ius_razon.persistence.argumentation_repository import (
-    ArgumentationRepository,
-)
 from ius_razon.persistence.backend import PersistenceSettings
-from ius_razon.persistence.backup import create_database_backup
-from ius_razon.persistence.llm_repository import LLMRepository
-from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
-from ius_razon.persistence.reasoning_repository import ReasoningRepository
-from ius_razon.persistence.sqlite_repository import SQLiteRepository
+from ius_razon.persistence.factory import build_persistence_bundle
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
 from ius_razon.security.llm_ollama_config import (
     OllamaProviderConfigurationError,
@@ -121,42 +114,27 @@ def build_services() -> tuple[
     configure_logging(config)
     persistence_settings = PersistenceSettings.from_env()
     persistence_settings.require_runtime_supported()
-    backup_path = create_database_backup(
-        config.db_path,
-        config.data_dir / "backups",
+    persistence = build_persistence_bundle(
+        config=config,
+        settings=persistence_settings,
     )
-    repository = SQLiteRepository(config.db_path)
-    repository.initialize()
-    reasoning_repository = ReasoningRepository(config.db_path)
-    reasoning_repository.initialize()
-    argumentation_repository = ArgumentationRepository(config.db_path)
-    argumentation_repository.initialize()
-    llm_repository = LLMRepository(config.db_path)
-    llm_repository.initialize()
+    backup_path = persistence.startup_backup
+    repository = persistence.case_repository
+    reasoning_repository = persistence.reasoning_repository
+    argumentation_repository = persistence.argumentation_repository
+    llm_repository = persistence.llm_repository
     case_service = CaseService(
         repository=repository,
         config=config,
-        mutation_backup=SQLiteMutationBackup(
-            config.db_path,
-            config.data_dir / "backups",
-            keep=20,
-        ),
+        mutation_backup=persistence.mutation_backup,
     )
     reasoning = ReasoningService(
         repository=reasoning_repository,
-        mutation_backup=SQLiteMutationBackup(
-            reasoning_repository.db_path,
-            config.data_dir / "backups",
-            keep=20,
-        ),
+        mutation_backup=persistence.mutation_backup,
     )
     argumentation = ArgumentationService(
         repository=argumentation_repository,
-        mutation_backup=SQLiteMutationBackup(
-            argumentation_repository.db_path,
-            config.data_dir / "backups",
-            keep=20,
-        ),
+        mutation_backup=persistence.mutation_backup,
     )
     report_service = LegalReportService(
         case_service=case_service,
@@ -192,11 +170,7 @@ def build_services() -> tuple[
         ollama_configuration_error=ollama_error,
         ollama_health_probe=ollama_health_probe,
         repository=llm_repository,
-        mutation_backup=SQLiteMutationBackup(
-            llm_repository.db_path,
-            config.data_dir / "backups",
-            keep=20,
-        ),
+        mutation_backup=persistence.mutation_backup,
     )
     privacy_settings = PrivacySettings.from_env()
     privacy_service = PrivacyService(
