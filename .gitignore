@@ -51,3 +51,6 @@ htmlcov/
 *.tmp
 *.temp
 *.swp
+
+# Secretos y respaldos locales de Streamlit
+.streamlit/secrets*.toml
