@@ -87,6 +87,11 @@ from ius_razon.ui.app_shell import (
 from ius_razon.ui.llm_assistant_view import render_llm_assistant
 from ius_razon.ui.performance import measure_view_render
 from ius_razon.ui.privacy_view import render_privacy_center
+from ius_razon.ui.public_portal import (
+    render_protected_sidebar_controls,
+    render_public_portal,
+)
+from ius_razon.ui.user_help import render_section_help
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -191,17 +196,41 @@ def build_services() -> tuple[
     )
 
 
-(
-    service,
-    reasoning_service,
-    argumentation_service,
-    legal_report_service,
-    llm_assistant_service,
-    privacy_service,
-    privacy_settings,
-    app_config,
-    startup_backup,
-) = build_services()
+service: CaseService
+reasoning_service: ReasoningService
+argumentation_service: ArgumentationService
+legal_report_service: LegalReportService
+llm_assistant_service: LLMAssistantService
+privacy_service: PrivacyService
+privacy_settings: PrivacySettings
+app_config: AppConfig
+startup_backup: Path | None
+
+
+def initialize_authenticated_services() -> None:
+    """Inicializa servicios únicamente después de autenticar."""
+
+    global service
+    global reasoning_service
+    global argumentation_service
+    global legal_report_service
+    global llm_assistant_service
+    global privacy_service
+    global privacy_settings
+    global app_config
+    global startup_backup
+
+    (
+        service,
+        reasoning_service,
+        argumentation_service,
+        legal_report_service,
+        llm_assistant_service,
+        privacy_service,
+        privacy_settings,
+        app_config,
+        startup_backup,
+    ) = build_services()
 
 
 def enum_options(enum_type: type[Any]) -> list[str]:
@@ -3417,6 +3446,12 @@ def render_active_page(page_id: str, case_id: str) -> None:
 
 def main() -> None:
     render_accessibility_foundation()
+
+    if not render_public_portal(PROJECT_ROOT):
+        return
+
+    initialize_authenticated_services()
+
     render_app_header(
         version="0.8.1",
         sprint="5.4",
@@ -3426,6 +3461,7 @@ def main() -> None:
     render_notice()
 
     with st.sidebar:
+        render_protected_sidebar_controls()
         st.header("Expedientes")
         selected_case_id = case_selector()
         with st.expander(
@@ -3479,6 +3515,7 @@ def main() -> None:
         )
 
     render_section_context(selected_navigation)
+    render_section_help(selected_navigation.page_id)
     render_active_page(
         selected_navigation.page_id,
         selected_case_id,
