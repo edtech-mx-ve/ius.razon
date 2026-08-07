@@ -320,6 +320,101 @@ def create_case_form() -> None:
                 st.error(f"No fue posible crear el expediente: {exc}")
 
 
+def edit_case_form(case_id: str) -> None:
+    case = service.get_case_summary(case_id).case
+
+    matter_options = ["Civil", "Mercantil"]
+    if case.matter not in matter_options:
+        matter_options.insert(0, case.matter)
+
+    status_options = enum_options(CaseStatus)
+    confidentiality_options = enum_options(ConfidentialityLevel)
+
+    with st.form(f"edit_case_form_{case_id}"):
+        st.subheader("Editar expediente")
+        title = st.text_input(
+            "Título *",
+            value=case.title,
+            max_chars=160,
+        )
+        description = st.text_area(
+            "Descripción *",
+            value=case.description,
+            max_chars=4000,
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            matter = st.selectbox(
+                "Materia",
+                matter_options,
+                index=matter_options.index(case.matter),
+            )
+            jurisdiction = st.text_input(
+                "Jurisdicción *",
+                value=case.jurisdiction,
+            )
+            location = st.text_input(
+                "Ubicación",
+                value=case.location or "",
+            )
+            opened_on = st.date_input(
+                "Fecha de apertura",
+                value=case.opened_on,
+            )
+
+        with col2:
+            status = st.selectbox(
+                "Estado",
+                status_options,
+                index=status_options.index(case.status.value),
+            )
+            objective = st.text_area(
+                "Objetivo del análisis",
+                value=case.objective or "",
+                max_chars=1000,
+            )
+            user_role = st.text_input(
+                "Rol del usuario",
+                value=case.user_role or "",
+                max_chars=120,
+            )
+            confidentiality = st.selectbox(
+                "Confidencialidad",
+                confidentiality_options,
+                index=confidentiality_options.index(
+                    case.confidentiality.value
+                ),
+            )
+
+        if st.form_submit_button("Guardar cambios", type="primary"):
+            try:
+                record = service.update_case(
+                    case_id,
+                    CaseCreate(
+                        title=title,
+                        description=description,
+                        matter=matter,
+                        jurisdiction=jurisdiction,
+                        location=location or None,
+                        opened_on=opened_on,
+                        status=CaseStatus(status),
+                        objective=objective or None,
+                        user_role=user_role or None,
+                        confidentiality=ConfidentialityLevel(
+                            confidentiality
+                        ),
+                    ),
+                )
+                st.success("Expediente actualizado.")
+                st.session_state["selected_case_id"] = record.id
+                st.rerun()
+            except Exception as exc:
+                st.error(
+                    f"No fue posible actualizar el expediente: {exc}"
+                )
+
+
 def case_selector() -> str | None:
     records = service.list_cases()
     if not records:
@@ -3469,6 +3564,9 @@ def main() -> None:
             expanded=selected_case_id is None,
         ):
             create_case_form()
+        if selected_case_id is not None:
+            with st.expander("Editar expediente", expanded=False):
+                edit_case_form(selected_case_id)
         with st.expander("Persistencia", expanded=False):
             if privacy_settings.display_storage_paths:
                 st.caption("Base SQLite activa")

@@ -350,6 +350,58 @@ class SQLiteRepository:
             raise NotFoundError("El expediente no existe.")
         return self._row_to_case(row)
 
+    def update_case(
+        self,
+        case_id: str,
+        payload: CaseCreate,
+    ) -> CaseRecord:
+        self.get_case(case_id)
+        now = utc_now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE cases
+                SET title = ?,
+                    description = ?,
+                    matter = ?,
+                    jurisdiction = ?,
+                    location = ?,
+                    opened_on = ?,
+                    status = ?,
+                    objective = ?,
+                    user_role = ?,
+                    confidentiality = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    payload.title,
+                    payload.description,
+                    payload.matter,
+                    payload.jurisdiction,
+                    payload.location,
+                    payload.opened_on.isoformat(),
+                    payload.status.value,
+                    payload.objective,
+                    payload.user_role,
+                    payload.confidentiality.value,
+                    now.isoformat(),
+                    case_id,
+                ),
+            )
+            self._insert_audit(
+                connection,
+                case_id=case_id,
+                event_type="case.updated",
+                entity_type="case",
+                entity_id=case_id,
+                detail={
+                    "matter": payload.matter,
+                    "status": payload.status.value,
+                },
+            )
+        return self.get_case(case_id)
+
     def add_party(self, payload: PartyCreate) -> PartyRecord:
         self.get_case(payload.case_id)
         party_id = str(uuid4())
