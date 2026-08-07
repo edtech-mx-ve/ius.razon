@@ -137,7 +137,11 @@ def build_assistant(
         argumentation_service=argumentation_service,
         provider=DeterministicMockProvider(),
         repository=llm_repository,
-        backup_dir=data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            llm_repository.db_path,
+            data_dir / "backups",
+            keep=20,
+        ),
     )
 
     case = case_service.create_case(

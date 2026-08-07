@@ -192,7 +192,11 @@ def build_services() -> tuple[
         ollama_configuration_error=ollama_error,
         ollama_health_probe=ollama_health_probe,
         repository=llm_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            llm_repository.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
     )
     privacy_settings = PrivacySettings.from_env()
     privacy_service = PrivacyService(

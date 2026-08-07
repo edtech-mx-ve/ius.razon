@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from pathlib import Path
 
 from ius_razon.domain.llm_models import (
     AssistantDraftCreate,
@@ -19,8 +18,10 @@ from ius_razon.domain.llm_models import (
     ProviderMode,
     ProviderRequest,
 )
-from ius_razon.persistence.backup import create_database_backup
-from ius_razon.persistence.llm_repository import LLMRepository
+from ius_razon.persistence.llm_repository_protocol import (
+    LLMRepositoryProtocol,
+)
+from ius_razon.persistence.mutation_backup import MutationBackup
 from ius_razon.security.llm_external_config import ExternalProviderSettings
 from ius_razon.security.llm_external_test import (
     ControlledExternalTestError,
@@ -74,8 +75,8 @@ class LLMAssistantService:
         reasoning_service: ReasoningService,
         argumentation_service: ArgumentationService,
         provider: LLMProvider,
-        repository: LLMRepository,
-        backup_dir: Path | None = None,
+        repository: LLMRepositoryProtocol,
+        mutation_backup: MutationBackup,
         external_provider: LLMProvider | None = None,
         external_settings: ExternalProviderSettings | None = None,
         external_configuration_error: str | None = None,
@@ -106,7 +107,7 @@ class LLMAssistantService:
         self._ollama_configuration_error = ollama_configuration_error
         self._ollama_health_probe = ollama_health_probe
         self._repository = repository
-        self._backup_dir = backup_dir
+        self._mutation_backup = mutation_backup
 
     @property
     def provider_name(self) -> str:
@@ -1181,9 +1182,7 @@ class LLMAssistantService:
         )
 
     def _backup_before_review(self) -> None:
-        if self._backup_dir is None:
-            return
-        create_database_backup(
-            self._repository.db_path,
-            self._backup_dir,
+        self._mutation_backup.before_mutation()
+        LOGGER.info(
+            "Política de respaldo previa a revisión LLM completada."
         )
