@@ -20,6 +20,7 @@ from ius_razon.domain.reasoning_models import (
     RuleConditionCreate,
     RuleKind,
 )
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.services.case_service import CaseService
@@ -44,7 +45,15 @@ def build_services(tmp_path: Path) -> tuple[CaseService, ReasoningService]:
     reasoning_repository = ReasoningRepository(config.db_path)
     reasoning_repository.initialize()
     return (
-        CaseService(case_repository, config),
+        CaseService(
+            case_repository,
+            config,
+            mutation_backup=SQLiteMutationBackup(
+                config.db_path,
+                config.data_dir / "backups",
+                keep=20,
+            ),
+        ),
         ReasoningService(reasoning_repository),
     )
 

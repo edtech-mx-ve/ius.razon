@@ -56,6 +56,7 @@ from ius_razon.persistence.llm_repository import (
     LLMRepository,
     LLMReviewConflictError,
 )
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.security.llm_guardrails import (
@@ -105,7 +106,15 @@ def build_assistant(
     llm_repository = LLMRepository(config.db_path)
     llm_repository.initialize()
 
-    case_service = CaseService(case_repository, config)
+    case_service = CaseService(
+        case_repository,
+        config,
+        mutation_backup=SQLiteMutationBackup(
+            config.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
+    )
     reasoning_service = ReasoningService(
         reasoning_repository,
         backup_dir=data_dir / "backups",

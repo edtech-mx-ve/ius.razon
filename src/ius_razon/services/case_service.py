@@ -27,8 +27,8 @@ from ius_razon.domain.models import (
     PartyCreate,
     PartyRecord,
 )
-from ius_razon.persistence.backup import create_database_backup
-from ius_razon.persistence.sqlite_repository import SQLiteRepository
+from ius_razon.persistence.case_repository import CaseRepository
+from ius_razon.persistence.mutation_backup import MutationBackup
 from ius_razon.security.files import StoredFile, store_uploaded_file
 
 LOGGER = logging.getLogger(__name__)
@@ -37,9 +37,15 @@ LOGGER = logging.getLogger(__name__)
 class CaseService:
     """Orquesta casos de uso sin exponer detalles de persistencia a la interfaz."""
 
-    def __init__(self, repository: SQLiteRepository, config: AppConfig) -> None:
+    def __init__(
+        self,
+        repository: CaseRepository,
+        config: AppConfig,
+        mutation_backup: MutationBackup,
+    ) -> None:
         self._repository = repository
         self._config = config
+        self._mutation_backup = mutation_backup
 
     def create_case(self, payload: CaseCreate) -> CaseRecord:
         record = self._repository.create_case(payload)
@@ -528,16 +534,8 @@ class CaseService:
         )
 
     def _backup_before_mutation(self) -> None:
-        backup_path = create_database_backup(
-            self._config.db_path,
-            self._config.data_dir / "backups",
-            keep=20,
-        )
-        if backup_path is None:
-            raise RuntimeError(
-                "No fue posible crear el respaldo previo; la operación fue cancelada."
-            )
-        LOGGER.info("Respaldo previo creado. file=%s", backup_path.name)
+        self._mutation_backup.before_mutation()
+        LOGGER.info("Política de respaldo previo completada.")
 
     @staticmethod
     def _validate_confirmation(expected_code: str, confirmation_code: str) -> None:

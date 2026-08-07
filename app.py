@@ -60,6 +60,7 @@ from ius_razon.persistence.argumentation_repository import (
 )
 from ius_razon.persistence.backup import create_database_backup
 from ius_razon.persistence.llm_repository import LLMRepository
+from ius_razon.persistence.mutation_backup import SQLiteMutationBackup
 from ius_razon.persistence.reasoning_repository import ReasoningRepository
 from ius_razon.persistence.sqlite_repository import SQLiteRepository
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
@@ -129,7 +130,15 @@ def build_services() -> tuple[
     argumentation_repository.initialize()
     llm_repository = LLMRepository(config.db_path)
     llm_repository.initialize()
-    case_service = CaseService(repository=repository, config=config)
+    case_service = CaseService(
+        repository=repository,
+        config=config,
+        mutation_backup=SQLiteMutationBackup(
+            config.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
+    )
     reasoning = ReasoningService(
         repository=reasoning_repository,
         backup_dir=config.data_dir / "backups",
