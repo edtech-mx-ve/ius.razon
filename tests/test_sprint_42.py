@@ -98,7 +98,11 @@ def build_services(
     )
     reasoning_service = ReasoningService(
         reasoning_repository,
-        backup_dir=data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            reasoning_repository.db_path,
+            data_dir / "backups",
+            keep=20,
+        ),
     )
     argumentation_service = ArgumentationService(
         argumentation_repository,

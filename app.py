@@ -144,7 +144,11 @@ def build_services() -> tuple[
     )
     reasoning = ReasoningService(
         repository=reasoning_repository,
-        backup_dir=config.data_dir / "backups",
+        mutation_backup=SQLiteMutationBackup(
+            reasoning_repository.db_path,
+            config.data_dir / "backups",
+            keep=20,
+        ),
     )
     argumentation = ArgumentationService(
         repository=argumentation_repository,

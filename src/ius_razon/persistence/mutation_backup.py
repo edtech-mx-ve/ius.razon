@@ -13,6 +13,13 @@ class MutationBackup(Protocol):
     def before_mutation(self) -> None: ...
 
 
+class NoOpMutationBackup:
+    """Política explícita sin respaldo persistente, útil en pruebas."""
+
+    def before_mutation(self) -> None:
+        return None
+
+
 class SQLiteMutationBackup:
     """Mantiene la política de respaldo local usada por SQLite."""
 

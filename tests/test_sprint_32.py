@@ -312,7 +312,11 @@ def build_services(tmp_path: Path) -> tuple[CaseService, ReasoningService]:
         ),
         ReasoningService(
             reasoning_repository,
-            backup_dir=data_dir / "backups",
+            mutation_backup=SQLiteMutationBackup(
+                reasoning_repository.db_path,
+                data_dir / "backups",
+                keep=20,
+            ),
         ),
     )
 
