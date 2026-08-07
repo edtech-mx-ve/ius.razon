@@ -182,17 +182,14 @@ def test_factory_builds_postgres_as_one_atomic_backend(
     assert bundle.startup_backup is None
 
 
-def test_app_uses_factory_but_keeps_postgres_guard() -> None:
+def test_app_uses_factory_with_postgres_runtime_enabled() -> None:
     app_source = (
         Path(__file__).resolve().parents[1] / "app.py"
     ).read_text(encoding="utf-8")
 
     assert "build_persistence_bundle" in app_source
-    assert "persistence_settings.require_runtime_supported()" in app_source
-    assert (
-        app_source.index("persistence_settings.require_runtime_supported()")
-        < app_source.index("build_persistence_bundle(")
-    )
+    assert "load_persistence_settings(PROJECT_ROOT)" in app_source
+    assert "require_runtime_supported" not in app_source
 
     forbidden_constructors = (
         "SQLiteRepository(",

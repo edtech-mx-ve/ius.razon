@@ -55,8 +55,10 @@ from ius_razon.domain.reasoning_models import (
 )
 from ius_razon.domain.report_models import IntegralReportRequest
 from ius_razon.logging_config import configure_logging
-from ius_razon.persistence.backend import PersistenceSettings
 from ius_razon.persistence.factory import build_persistence_bundle
+from ius_razon.persistence.postgres_runtime import (
+    load_persistence_settings,
+)
 from ius_razon.security.llm_external_test import ControlledExternalTestPolicy
 from ius_razon.security.llm_ollama_config import (
     OllamaProviderConfigurationError,
@@ -112,8 +114,7 @@ def build_services() -> tuple[
 
     config = AppConfig.from_env(PROJECT_ROOT)
     configure_logging(config)
-    persistence_settings = PersistenceSettings.from_env()
-    persistence_settings.require_runtime_supported()
+    persistence_settings = load_persistence_settings(PROJECT_ROOT)
     persistence = build_persistence_bundle(
         config=config,
         settings=persistence_settings,
