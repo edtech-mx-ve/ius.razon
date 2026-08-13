@@ -263,6 +263,51 @@ class PostgresRepository:
             ).fetchall()
         return [self._row_to_party(row) for row in rows]
 
+    def update_party(
+        self,
+        party_id: str,
+        payload: PartyCreate,
+    ) -> PartyRecord:
+        existing = self.get_party(party_id)
+        if existing.case_id != payload.case_id:
+            raise RepositoryError("La parte pertenece a otro expediente.")
+
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE parties
+                SET name_alias = %s,
+                    party_type = %s,
+                    legal_role = %s,
+                    representation = %s,
+                    claim = %s,
+                    position = %s
+                WHERE id = %s
+                  AND case_id = %s
+                """,
+                (
+                    payload.name_alias,
+                    payload.party_type.value,
+                    payload.legal_role.value,
+                    payload.representation,
+                    payload.claim,
+                    payload.position,
+                    party_id,
+                    payload.case_id,
+                ),
+            )
+            self._touch_case(connection, payload.case_id)
+            self._insert_audit(
+                connection,
+                case_id=payload.case_id,
+                event_type="party.updated",
+                entity_type="party",
+                entity_id=party_id,
+                detail={"role": payload.legal_role.value},
+            )
+
+        return self.get_party(party_id)
+
     def add_fact(self, payload: FactCreate) -> FactRecord:
         self.get_case(payload.case_id)
         if payload.actor_party_id:
