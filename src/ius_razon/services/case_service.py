@@ -91,6 +91,20 @@ class CaseService:
     def list_parties(self, case_id: str) -> list[PartyRecord]:
         return self._repository.list_parties(case_id)
 
+    def update_party(
+        self,
+        party_id: str,
+        payload: PartyCreate,
+    ) -> PartyRecord:
+        self._backup_before_mutation()
+        record = self._repository.update_party(party_id, payload)
+        LOGGER.info(
+            "Parte actualizada. case_id=%s party_id=%s",
+            payload.case_id,
+            party_id,
+        )
+        return record
+
     def add_fact(self, payload: FactCreate) -> FactRecord:
         record = self._repository.add_fact(payload)
         LOGGER.info("Hecho agregado. case_id=%s fact_id=%s", payload.case_id, record.id)

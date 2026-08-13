@@ -535,6 +535,80 @@ def render_parties(case_id: str) -> None:
             width="stretch",
             hide_index=True,
         )
+
+        st.markdown("### Editar parte")
+        party_labels = {
+            f"{party.name_alias} · {party.id[:8]}": party
+            for party in parties
+        }
+        selected_party_label = st.selectbox(
+            "Parte a editar",
+            list(party_labels),
+            key=f"party_edit_selector_{case_id}",
+        )
+        selected_party = party_labels[selected_party_label]
+        party_type_options = enum_options(PartyType)
+        party_role_options = enum_options(PartyRole)
+
+        with st.form(f"edit_party_form_{selected_party.id}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                edit_name_alias = st.text_input(
+                    "Nombre o seudónimo *",
+                    value=selected_party.name_alias,
+                    max_chars=200,
+                )
+                edit_party_type = st.selectbox(
+                    "Tipo de persona",
+                    party_type_options,
+                    index=party_type_options.index(
+                        selected_party.party_type.value
+                    ),
+                )
+                edit_legal_role = st.selectbox(
+                    "Rol jurídico",
+                    party_role_options,
+                    index=party_role_options.index(
+                        selected_party.legal_role.value
+                    ),
+                )
+            with col2:
+                edit_representation = st.text_input(
+                    "Representación",
+                    value=selected_party.representation or "",
+                    max_chars=300,
+                )
+                edit_claim = st.text_area(
+                    "Pretensión",
+                    value=selected_party.claim or "",
+                    max_chars=1500,
+                )
+                edit_position = st.text_area(
+                    "Posición inicial",
+                    value=selected_party.position or "",
+                    max_chars=1500,
+                )
+
+            if st.form_submit_button("Guardar cambios", type="primary"):
+                try:
+                    service.update_party(
+                        selected_party.id,
+                        PartyCreate(
+                            case_id=case_id,
+                            name_alias=edit_name_alias,
+                            party_type=PartyType(edit_party_type),
+                            legal_role=PartyRole(edit_legal_role),
+                            representation=edit_representation or None,
+                            claim=edit_claim or None,
+                            position=edit_position or None,
+                        ),
+                    )
+                    st.success("Parte actualizada.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(
+                        f"No fue posible actualizar la parte: {exc}"
+                    )
     else:
         st.info("No hay partes registradas.")
 
